@@ -1,96 +1,51 @@
-import os
+"""
+Configurações do projeto Commander 150.
+
+Todas as configurações sensíveis ou dependentes de ambiente vêm de variáveis de ambiente
+(arquivo core/.env em desenvolvimento). Veja backend/.env.example.
+"""
+
 from pathlib import Path
 
 import environ
 
-# Inicializa as variáveis de ambiente
-env = environ.Env(
-    DEBUG=(bool, False),
-    SECRET_KEY=(str, 'default-secret-key'),
-    DB_NAME=(str, 'commander150'),
-    DB_USER=(str, 'postgres'),
-    DB_PASSWORD=(str, 'password'),
-    DB_HOST=(str, 'localhost'),
-    DATABASE_URL=(str, "postgres://postgres:123@localhost:5432/commander150"),
-    EMAIL_PASSWORD=(str, None),
-    EMAIL_USER=(str, None),
-    CORS_ALLOWED_ORIGINS=(list, []),
-    CSRF_TRUSTED_ORIGINS=(list, []),
-    ALLOWED_HOSTS=(list, []),
-)
-
-# Carrega o arquivo .env, se ele existir
-environ.Env.read_env()
-
-# Caminho base do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Configurações de segurança
-SECRET_KEY = env('SECRET_KEY')
-DEBUG = env('DEBUG')
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
+env = environ.Env()
+environ.Env.read_env(BASE_DIR / 'core' / '.env')
 
-# Configuração do banco de dados padrão Neon
-DATABASES = {
-    'default': env.db('DATABASE_URL')
-}
+# ------------------------------------------------------------------------------
+# Segurança
+# ------------------------------------------------------------------------------
+DEBUG = env.bool('DEBUG', default=False)
 
-# Configuração do banco de dados
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': env('DB_NAME'),  # Nome do banco de dados
-#         'USER': env('DB_USER'),  # Usuário do PostgreSQL
-#         'PASSWORD': env('DB_PASSWORD'),  # Senha
-#         'HOST': env('DB_HOST'),  # Host
-#         'PORT': '5432',  # Porta padrão do PostgreSQL
-#     }
-# }
+# Em desenvolvimento aceitamos uma chave padrão; em produção SECRET_KEY é obrigatória.
+SECRET_KEY = env('SECRET_KEY', default='chave-insegura-apenas-para-desenvolvimento' if DEBUG else environ.Env.NOTSET)
 
-# Configuração do envio de emails
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = env('EMAIL_USER', default='')
-EMAIL_HOST_PASSWORD = env('EMAIL_PASSWORD', default='')
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'] if DEBUG else [])
 
-# Configuração do CORS e CSRF
-CORS_ALLOW_ALL_ORIGINS = False
+# Frontend e API ficam em domínios diferentes: o cookie de sessão precisa de SameSite=None (e, portanto, Secure).
+# A proteção contra CSRF é feita verificando a origem (usuarios.authentication.SessionAuthenticationPorOrigem).
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_PATH = '/api/v1/'
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 14  # 2 semanas
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 CORS_ALLOW_CREDENTIALS = True
-CSRF_COOKIE_SECURE = False
-CSRF_COOKIE_HTTPONLY = False
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 
-# Configurações de sessão
-SESSION_COOKIE_PATH = '/api/v1/'
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = True  # True em produção (HTTPS)
-# Alterado o SESSION_COOKIE_SAMESITE para None, pois o Lax estava dando problemas por conta das origens
-# das requisições. Já que estamos trabalhando com uma API e não um site, é aceitável.
-SESSION_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_AGE = 1209600  # 2 semanas em segundos (opcional)
-SESSION_SAVE_EVERY_REQUEST = True  # Renova a sessão a cada request
-SESSION_ENGINE = "django.contrib.sessions.backends.db"
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
-# Configuração do modelo de usuário customizado
-AUTH_USER_MODEL = 'usuarios.Usuario'
-
-# Garantir que createsuperuser defina tipo=ADMIN
-DJANGO_SUPERUSER_TIPO = 'ADMIN'
-
-# Configuração do Django Rest Framework
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "usuarios.authentication.SessionAuthenticationSemCSRF",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-}
-
-# Aplicações instaladas
+# ------------------------------------------------------------------------------
+# Aplicação
+# ------------------------------------------------------------------------------
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -102,25 +57,24 @@ INSTALLED_APPS = [
     'drf_yasg',
     'django_filters',
     'corsheaders',
-    'torneios',
     'usuarios',
+    'torneios',
 ]
 
-# Middlewares
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  # Deve vir antes de CommonMiddleware
+    'corsheaders.middleware.CorsMiddleware',  # deve vir antes do CommonMiddleware
     'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',  # protege o /admin/; as views da API usam verificação por origem
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# Configuração de URLs
 ROOT_URLCONF = 'core.urls'
+WSGI_APPLICATION = 'core.wsgi.application'
 
-# Configuração de templates
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -128,7 +82,6 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
-                'django.template.context_processors.debug',
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -137,34 +90,74 @@ TEMPLATES = [
     },
 ]
 
-# WSGI Application
-WSGI_APPLICATION = 'core.wsgi.application'
+# ------------------------------------------------------------------------------
+# Banco de dados (DATABASE_URL, ex: postgres://usuario:senha@host:5432/commander150)
+# ------------------------------------------------------------------------------
+DATABASES = {
+    'default': env.db('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db.sqlite3"}'),
+}
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Validação de senha
+# ------------------------------------------------------------------------------
+# Autenticação
+# ------------------------------------------------------------------------------
+AUTH_USER_MODEL = 'usuarios.Usuario'
+
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'usuarios.authentication.SessionAuthenticationPorOrigem',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+# ------------------------------------------------------------------------------
+# E-mail (SMTP do Gmail com senha de app)
+# ------------------------------------------------------------------------------
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = env('EMAIL_USER', default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# ------------------------------------------------------------------------------
 # Internacionalização
+# ------------------------------------------------------------------------------
 LANGUAGE_CODE = 'pt-BR'
 TIME_ZONE = 'America/Sao_Paulo'
 USE_I18N = True
 USE_TZ = True
 
-# Configuração de arquivos estáticos
+# ------------------------------------------------------------------------------
+# Arquivos estáticos
+# ------------------------------------------------------------------------------
 STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Configuração do campo de ID padrão
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# ------------------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simples': {'format': '{asctime} {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'simples'},
+    },
+    'root': {'handlers': ['console'], 'level': 'INFO'},
+    'loggers': {
+        'django.db.backends': {'level': 'WARNING'},
+    },
+}

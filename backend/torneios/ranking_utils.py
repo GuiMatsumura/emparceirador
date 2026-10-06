@@ -17,19 +17,18 @@ Otimizações implementadas:
 - select_related para evitar N+1 queries
 """
 
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, Set, Optional, List, Tuple
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.db import transaction
 
-from .models import Torneio, Rodada, Mesa, MesaJogador, Inscricao, RankingParcial
-
+from .models import Inscricao, RankingParcial, Rodada, Torneio
 
 # Constante para arredondamento decimal
 QUATRO_CASAS = Decimal('0.0001')
 FLOOR_MW = Decimal('0.0100')  # 1% floor (máxima precisão, evita divisão por zero)
 
 
-def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict:
+def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> dict:
     """
     Busca todas as rodadas finalizadas até rodada_numero e constrói
     estruturas em memória para cálculos eficientes.
@@ -43,13 +42,11 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict
         - num_rodadas_jogadas: {jogador_id: count}  # Otimização
     """
     # 1 query otimizada com prefetch_related
-    rodadas = Rodada.objects.filter(
-        id_torneio=torneio,
-        numero_rodada__lte=rodada_numero,
-        status='Finalizada'
-    ).prefetch_related(
-        'mesas__jogadores_na_mesa__id_usuario'
-    ).order_by('numero_rodada')
+    rodadas = (
+        Rodada.objects.filter(id_torneio=torneio, numero_rodada__lte=rodada_numero, status='Finalizada')
+        .prefetch_related('mesas__jogadores_na_mesa__id_usuario')
+        .order_by('numero_rodada')
+    )
 
     # Estruturas em memória
     pontos_por_rodada = {}
@@ -123,10 +120,9 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict
                 oponentes[j2][rodada.numero_rodada] = jogadores_time_1
 
     # Adicionar jogadores com bye (inscritos ativos que não estão em nenhuma mesa da rodada)
-    jogadores_ativos = Inscricao.objects.filter(
-        id_torneio=torneio,
-        status='Inscrito'
-    ).values_list('id_usuario_id', 'data_inscricao')
+    jogadores_ativos = Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').values_list(
+        'id_usuario_id', 'data_inscricao'
+    )
 
     for jogador_id, data_inscricao in jogadores_ativos:
         if jogador_id not in pontos_por_rodada:
@@ -153,8 +149,7 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict
 
     for jogador_id in pontos_por_rodada:
         total_pontos = sum(pontos_por_rodada[jogador_id].values())
-        num_rodadas = len([r for r in range(1, rodada_numero + 1)
-                          if r in pontos_por_rodada[jogador_id]])
+        num_rodadas = len([r for r in range(1, rodada_numero + 1) if r in pontos_por_rodada[jogador_id]])
 
         mw_base[jogador_id] = total_pontos
         num_rodadas_jogadas[jogador_id] = num_rodadas
@@ -164,17 +159,13 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict
         'parceiros': parceiros,
         'oponentes': oponentes,
         'mw_base': mw_base,
-        'num_rodadas_jogadas': num_rodadas_jogadas
+        'num_rodadas_jogadas': num_rodadas_jogadas,
     }
 
 
 def calcular_mw_ajustado(
-    jogador_alvo: int,
-    jogador_ref: int,
-    rodada_numero: int,
-    dados: Dict,
-    torneio: Torneio
-) -> Optional[float]:
+    jogador_alvo: int, jogador_ref: int, rodada_numero: int, dados: dict, torneio: Torneio
+) -> float | None:
     """
     Calcula MW% do jogador_alvo até rodada_numero,
     EXCLUINDO:
@@ -203,14 +194,8 @@ def calcular_mw_ajustado(
             continue
 
         # Verificar se jogaram juntos nesta rodada
-        foi_parceiro = (
-            r in dados['parceiros'][jogador_ref] and
-            dados['parceiros'][jogador_ref][r] == jogador_alvo
-        )
-        foi_oponente = (
-            r in dados['oponentes'][jogador_ref] and
-            jogador_alvo in dados['oponentes'][jogador_ref][r]
-        )
+        foi_parceiro = r in dados['parceiros'][jogador_ref] and dados['parceiros'][jogador_ref][r] == jogador_alvo
+        foi_oponente = r in dados['oponentes'][jogador_ref] and jogador_alvo in dados['oponentes'][jogador_ref][r]
 
         if not (foi_parceiro or foi_oponente):
             # Rodada válida - incluir pontos (já sabemos que não é bye)
@@ -228,10 +213,10 @@ def calcular_mw_ajustado(
 def calcular_metricas_jogador(
     jogador_id: int,
     rodada_numero: int,
-    dados: Dict,
+    dados: dict,
     torneio: Torneio,
-    cache_mw_ajustado: Dict[Tuple[int, int], Optional[float]]
-) -> Dict:
+    cache_mw_ajustado: dict[tuple[int, int], float | None],
+) -> dict:
     """
     Calcula todas as métricas de um jogador até a rodada especificada.
 
@@ -286,9 +271,7 @@ def calcular_metricas_jogador(
     def get_mw_ajustado_cached(alvo, ref):
         key = (alvo, ref)
         if key not in cache_mw_ajustado:
-            cache_mw_ajustado[key] = calcular_mw_ajustado(
-                alvo, ref, rodada_numero, dados, torneio
-            )
+            cache_mw_ajustado[key] = calcular_mw_ajustado(alvo, ref, rodada_numero, dados, torneio)
         return cache_mw_ajustado[key]
 
     # 4. OMW% (força dos oponentes)
@@ -325,12 +308,12 @@ def calcular_metricas_jogador(
         'mw': Decimal(str(mw)).quantize(QUATRO_CASAS, rounding=ROUND_HALF_UP),
         'omw': Decimal(str(omw)).quantize(QUATRO_CASAS, rounding=ROUND_HALF_UP),
         'pmw': Decimal(str(pmw)).quantize(QUATRO_CASAS, rounding=ROUND_HALF_UP),
-        'balanco': Decimal(str(balanco)).quantize(QUATRO_CASAS, rounding=ROUND_HALF_UP)
+        'balanco': Decimal(str(balanco)).quantize(QUATRO_CASAS, rounding=ROUND_HALF_UP),
     }
 
 
 @transaction.atomic
-def calcular_e_salvar_ranking_parcial(torneio: Torneio, rodada_numero: int) -> List[Dict]:
+def calcular_e_salvar_ranking_parcial(torneio: Torneio, rodada_numero: int) -> list[dict]:
     """
     Calcula ranking considerando rodadas 1 até rodada_numero.
     Salva na tabela RankingParcial.
@@ -354,55 +337,48 @@ def calcular_e_salvar_ranking_parcial(torneio: Torneio, rodada_numero: int) -> L
     # 3. Calcular métricas para cada jogador
     ranking = []
     for jogador_id in jogadores_ativos:
-        metricas = calcular_metricas_jogador(
-            jogador_id,
-            rodada_numero,
-            dados,
-            torneio,
-            cache_mw_ajustado
-        )
+        metricas = calcular_metricas_jogador(jogador_id, rodada_numero, dados, torneio, cache_mw_ajustado)
         ranking.append(metricas)
 
     # 4. Ordenar por critérios em cascata
     ranking_ordenado = sorted(
         ranking,
         key=lambda x: (
-            x['pontos'],      # 1º critério: Pontuação total
-            x['balanco'],     # 2º critério: Balanço (OMW% - PMW%)
-            x['omw'],         # 3º critério: OMW%
-            x['mw']           # 4º critério: MW%
+            x['pontos'],  # 1º critério: Pontuação total
+            x['balanco'],  # 2º critério: Balanço (OMW% - PMW%)
+            x['omw'],  # 3º critério: OMW%
+            x['mw'],  # 4º critério: MW%
         ),
-        reverse=True
+        reverse=True,
     )
 
     # 5. Salvar no banco (bulk insert)
     # Deletar registros antigos desta rodada
-    RankingParcial.objects.filter(
-        id_torneio=torneio,
-        rodada_numero=rodada_numero
-    ).delete()
+    RankingParcial.objects.filter(id_torneio=torneio, rodada_numero=rodada_numero).delete()
 
     # Criar novos registros
     objetos = []
     for idx, metricas in enumerate(ranking_ordenado):
-        objetos.append(RankingParcial(
-            id_torneio=torneio,
-            id_usuario_id=metricas['jogador_id'],
-            rodada_numero=rodada_numero,
-            pontos_totais=metricas['pontos'],
-            mw_percentage=metricas['mw'],
-            omw_percentage=metricas['omw'],
-            pmw_percentage=metricas['pmw'],
-            balanco=metricas['balanco'],
-            posicao=idx + 1
-        ))
+        objetos.append(
+            RankingParcial(
+                id_torneio=torneio,
+                id_usuario_id=metricas['jogador_id'],
+                rodada_numero=rodada_numero,
+                pontos_totais=metricas['pontos'],
+                mw_percentage=metricas['mw'],
+                omw_percentage=metricas['omw'],
+                pmw_percentage=metricas['pmw'],
+                balanco=metricas['balanco'],
+                posicao=idx + 1,
+            )
+        )
 
     RankingParcial.objects.bulk_create(objetos)
 
     return ranking_ordenado
 
 
-def obter_jogadores_ativos(torneio: Torneio) -> List[int]:
+def obter_jogadores_ativos(torneio: Torneio) -> list[int]:
     """
     Retorna lista de IDs de jogadores ativos (inscritos) no torneio.
 
@@ -412,9 +388,4 @@ def obter_jogadores_ativos(torneio: Torneio) -> List[int]:
     Returns:
         list: IDs dos jogadores ativos
     """
-    return list(
-        Inscricao.objects.filter(
-            id_torneio=torneio,
-            status='Inscrito'
-        ).values_list('id_usuario_id', flat=True)
-    )
+    return list(Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').values_list('id_usuario_id', flat=True))

@@ -2,78 +2,87 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils.crypto import get_random_string
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND, \
-    HTTP_204_NO_CONTENT
+from rest_framework.status import (
+    HTTP_200_OK,
+    HTTP_204_NO_CONTENT,
+    HTTP_400_BAD_REQUEST,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_404_NOT_FOUND,
+)
 from rest_framework.views import APIView
 
 from torneios.permissoes import IsOwnerOrAdmin
-from .authentication import SessionAuthenticationSemCSRF
+
 from .models import Usuario
-from .serializers import (RequisitarTrocaSenhaSerializer, ValidarTokenRedefinirSenhaSerializer,
-                          UsuarioSerializer, UsuarioCreateSerializer, AlterarSenhaSerializer, LoginSerializer)
+from .serializers import (
+    AlterarSenhaSerializer,
+    LoginSerializer,
+    RequisitarTrocaSenhaSerializer,
+    UsuarioCreateSerializer,
+    UsuarioSerializer,
+    ValidarTokenRedefinirSenhaSerializer,
+)
 
 
 class LoginView(APIView):
     """
     Endpoint para realizar o login na aplicação.
     """
+
     permission_classes = [AllowAny]
 
-    @swagger_auto_schema(
-        request_body=LoginSerializer,
-        responses={200: UsuarioSerializer(many=False)}
-    )
+    @swagger_auto_schema(request_body=LoginSerializer, responses={200: UsuarioSerializer(many=False)})
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
 
         if not email or not password:
-            return Response({"error": "Email e senha são obrigatórios"}, status=HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Email e senha são obrigatórios'}, status=HTTP_400_BAD_REQUEST)
 
         usuario = authenticate(request, username=email, password=password)
 
         if not usuario:
-            return Response({"error": "Credenciais inválidas"}, status=HTTP_401_UNAUTHORIZED)
+            return Response({'error': 'Credenciais inválidas'}, status=HTTP_401_UNAUTHORIZED)
 
         if not usuario.is_active:
-            return Response({"error": "Usuário inativo"}, status=HTTP_401_UNAUTHORIZED)
+            return Response({'error': 'Usuário inativo'}, status=HTTP_401_UNAUTHORIZED)
 
         login(request, usuario)
 
-        return Response({
-            "message": "Login realizado com sucesso",
-            "sessionid": request.session.session_key,
-            "dados": UsuarioSerializer(usuario).data
-        }, status=HTTP_200_OK)
+        return Response(
+            {
+                'message': 'Login realizado com sucesso',
+                'sessionid': request.session.session_key,
+                'dados': UsuarioSerializer(usuario).data,
+            },
+            status=HTTP_200_OK,
+        )
 
 
 class LogoutView(APIView):
     """
     Endpoint para realizar o logout na aplicação.
     """
-    authentication_classes = [SessionAuthenticationSemCSRF]
+
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: 'Logout realizado com sucesso'}
-    )
+    @swagger_auto_schema(responses={200: 'Logout realizado com sucesso'})
     def post(self, request):
         session_id = request.session.session_key
 
         logout(request)
 
-        return Response({
-            "message": "Logout realizado com sucesso",
-            "sessionid_anterior": session_id
-        }, status=HTTP_200_OK)
+        return Response(
+            {'message': 'Logout realizado com sucesso', 'sessionid_anterior': session_id}, status=HTTP_200_OK
+        )
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -89,14 +98,10 @@ class ValidarSessaoView(APIView):
       retorna uma resposta de sucesso sem conteúdo (status 204), evitando
       que um erro seja enviado e mal interpretado, como um 403.
     """
+
     permission_classes = [AllowAny]
 
-    @swagger_auto_schema(
-        responses={
-            200: UsuarioSerializer(many=False),
-            204: "Nenhuma sessão ativa."
-        }
-    )
+    @swagger_auto_schema(responses={200: UsuarioSerializer(many=False), 204: 'Nenhuma sessão ativa.'})
     def get(self, request):
         """
         Verifica o estado de autenticação do utilizador da requisição.
@@ -118,12 +123,10 @@ class RequisitarTrocaSenhaView(APIView):
 
     Em caso de sucesso, envia o Token de Recuperação de Senha para o email do usuário.
     """
+
     permission_classes = [AllowAny]
 
-    @swagger_auto_schema(
-        request_body=RequisitarTrocaSenhaSerializer,
-        responses={200: 'Token enviado com sucesso'}
-    )
+    @swagger_auto_schema(request_body=RequisitarTrocaSenhaSerializer, responses={200: 'Token enviado com sucesso'})
     def post(self, request):
         serializer = RequisitarTrocaSenhaSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -138,10 +141,7 @@ class RequisitarTrocaSenhaView(APIView):
         usuario.save(update_fields=['token_redefinir_senha', 'token_redefinir_senha_criado_em'])
 
         # Renderizar o HTML do email
-        email_html = render_to_string(
-            'emails/token_redefinir_senha.html',
-            {'token': token, 'nome': usuario.username}
-        )
+        email_html = render_to_string('emails/token_redefinir_senha.html', {'token': token, 'nome': usuario.username})
 
         # Fallback em texto puro
         email_texto_puro = f'Seu token para redefinição de senha é: {token}'
@@ -153,24 +153,24 @@ class RequisitarTrocaSenhaView(APIView):
             from_email=settings.EMAIL_HOST_USER,
             to=[email],
         )
-        email_msg.attach_alternative(email_html, "text/html")
+        email_msg.attach_alternative(email_html, 'text/html')
         email_msg.send()
 
-        return Response({"message": f"Token enviado para o email {email} com sucesso."}, status=HTTP_200_OK)
+        return Response({'message': f'Token enviado para o email {email} com sucesso.'}, status=HTTP_200_OK)
 
 
 class ValidarTokenRedefinirSenhaView(APIView):
     """
-        Endpoint para requisitar a Nova Senha
+    Endpoint para requisitar a Nova Senha
 
-        Utilizado após estar em posse do Token.
-        Em caso de sucesso, envia o a Nova Senha para o email do usuário.
-        """
+    Utilizado após estar em posse do Token.
+    Em caso de sucesso, envia o a Nova Senha para o email do usuário.
+    """
+
     permission_classes = [AllowAny]
 
     @swagger_auto_schema(
-        request_body=ValidarTokenRedefinirSenhaSerializer,
-        responses={200: 'Senha redefinida com sucesso'}
+        request_body=ValidarTokenRedefinirSenhaSerializer, responses={200: 'Senha redefinida com sucesso'}
     )
     def post(self, request):
         serializer = ValidarTokenRedefinirSenhaSerializer(data=request.data)
@@ -189,8 +189,9 @@ class ValidarTokenRedefinirSenhaView(APIView):
         usuario.save()
 
         # Renderizar o HTML do email
-        email_html = render_to_string('emails/sucesso_redefinir_senha.html',
-                                      {'nova_senha': nova_senha, 'nome': usuario.username})
+        email_html = render_to_string(
+            'emails/sucesso_redefinir_senha.html', {'nova_senha': nova_senha, 'nome': usuario.username}
+        )
         email_texto_puro = f'Sua nova senha é: {nova_senha}. Recomendamos alterá-la assim que possível.'
 
         # Configurar email com HTML
@@ -200,12 +201,13 @@ class ValidarTokenRedefinirSenhaView(APIView):
             from_email=settings.EMAIL_HOST_USER,
             to=[email],
         )
-        email_msg.attach_alternative(email_html, "text/html")
+        email_msg.attach_alternative(email_html, 'text/html')
         email_msg.send()
 
         return Response(
-            {"message": f"Senha redefinida com sucesso. Verifique seu email {email} para obter a nova senha."},
-            status=HTTP_200_OK)
+            {'message': f'Senha redefinida com sucesso. Verifique seu email {email} para obter a nova senha.'},
+            status=HTTP_200_OK,
+        )
 
 
 class AlterarSenhaView(APIView):
@@ -218,11 +220,12 @@ class AlterarSenhaView(APIView):
     - Recebe email, senha antiga e nova senha
     - Valida apenas se nova senha ≠ senha antiga
     """
+
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
 
     @swagger_auto_schema(
         request_body=AlterarSenhaSerializer,
-        responses={200: 'Senha alterada com sucesso', 400: 'Erro de validação', 404: 'Usuário não encontrado'}
+        responses={200: 'Senha alterada com sucesso', 400: 'Erro de validação', 404: 'Usuário não encontrado'},
     )
     def post(self, request, user_id):
         """
@@ -232,10 +235,7 @@ class AlterarSenhaView(APIView):
         try:
             usuario = Usuario.objects.get(id=user_id)
         except Usuario.DoesNotExist:
-            return Response(
-                {"error": "Usuário não encontrado."},
-                status=HTTP_404_NOT_FOUND
-            )
+            return Response({'error': 'Usuário não encontrado.'}, status=HTTP_404_NOT_FOUND)
 
         # Verifica permissões (IsOwnerOrAdmin garante que é o próprio ou admin)
         self.check_object_permissions(request, usuario)
@@ -247,18 +247,13 @@ class AlterarSenhaView(APIView):
 
         # Verifica se a senha antiga está correta
         if not usuario.check_password(serializer.validated_data['senha_antiga']):
-            return Response(
-                {"error": "Senha antiga incorreta."},
-                status=HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Senha antiga incorreta.'}, status=HTTP_400_BAD_REQUEST)
 
         # Altera a senha
         usuario.set_password(serializer.validated_data['nova_senha'])
         usuario.save()
 
-        return Response({
-            "message": "Senha alterada com sucesso."
-        }, status=HTTP_200_OK)
+        return Response({'message': 'Senha alterada com sucesso.'}, status=HTTP_200_OK)
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):
@@ -275,6 +270,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         • Retorna 403 Forbidden se usuário não for owner ou admin
         • Retorna 404 Not Found se objeto não existir
     """
+
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
 
@@ -315,7 +311,8 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         except Usuario.DoesNotExist:
             from rest_framework.exceptions import NotFound
-            raise NotFound("Usuário não encontrado.")
+
+            raise NotFound('Usuário não encontrado.')
 
     def get_serializer_class(self):
         """

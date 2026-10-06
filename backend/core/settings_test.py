@@ -6,6 +6,7 @@ Uso: python manage.py test --settings=core.settings_test
 Troca o banco por SQLite em memória (não depende do Postgres nem toca em dados reais)
 e o envio de e-mails pelo backend em memória do Django.
 """
+
 from .settings import *  # noqa: F401,F403
 
 DATABASES = {

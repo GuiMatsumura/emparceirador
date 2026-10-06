@@ -46,10 +46,7 @@ class UsuarioCreateSerializer(serializers.ModelSerializer):
         # Campos necessários para o cadastro.
         fields = ['id', 'email', 'username', 'tipo', 'password']
         # 'password' como 'write_only' significa que NUNCA será retornado em uma resposta da API (leitura).
-        extra_kwargs = {
-            'password': {'write_only': True},
-            'id': {'read_only': True}
-        }
+        extra_kwargs = {'password': {'write_only': True}, 'id': {'read_only': True}}
 
     def validate_tipo(self, value):
         """Cadastro público só cria JOGADOR ou LOJA. Apenas um ADMIN logado pode criar outro ADMIN."""
@@ -57,7 +54,7 @@ class UsuarioCreateSerializer(serializers.ModelSerializer):
             request = self.context.get('request')
             usuario_logado = getattr(request, 'user', None)
             if not (usuario_logado and usuario_logado.is_authenticated and usuario_logado.tipo == 'ADMIN'):
-                raise serializers.ValidationError("Não é permitido criar usuários do tipo ADMIN.")
+                raise serializers.ValidationError('Não é permitido criar usuários do tipo ADMIN.')
         return value
 
     def validate(self, data):
@@ -83,9 +80,10 @@ class UsuarioCreateSerializer(serializers.ModelSerializer):
 
 class RequisitarTrocaSenhaSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
     def validate_email(self, value):
         if not Usuario.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Usuário com este email não foi encontrado.")
+            raise serializers.ValidationError('Usuário com este email não foi encontrado.')
         return value
 
 
@@ -99,14 +97,14 @@ class ValidarTokenRedefinirSenhaSerializer(serializers.Serializer):
         usuario = Usuario.objects.filter(email=email).first()
 
         if not usuario:
-            raise serializers.ValidationError("Usuário com este email não foi encontrado.")
+            raise serializers.ValidationError('Usuário com este email não foi encontrado.')
 
         if not usuario.token_redefinir_senha or usuario.token_redefinir_senha != token:
-            raise serializers.ValidationError("Token inválido ou expirado.")
+            raise serializers.ValidationError('Token inválido ou expirado.')
 
         criado_em = usuario.token_redefinir_senha_criado_em
         if not criado_em or timezone.now() - criado_em > VALIDADE_TOKEN_REDEFINIR_SENHA:
-            raise serializers.ValidationError("Token inválido ou expirado.")
+            raise serializers.ValidationError('Token inválido ou expirado.')
 
         return data
 
@@ -116,6 +114,7 @@ class AlterarSenhaSerializer(serializers.Serializer):
     Serializer para alteração de senha.
     Apenas valida que a nova senha não seja igual à antiga.
     """
+
     senha_antiga = serializers.CharField(write_only=True)
     nova_senha = serializers.CharField(write_only=True)
 
@@ -125,7 +124,7 @@ class AlterarSenhaSerializer(serializers.Serializer):
         O usuário dono da senha pode ser passado em context['usuario'] (melhora a checagem de similaridade).
         """
         if data['senha_antiga'] == data['nova_senha']:
-            raise serializers.ValidationError("A nova senha não pode ser igual à senha antiga.")
+            raise serializers.ValidationError('A nova senha não pode ser igual à senha antiga.')
         try:
             validar_forca_senha(data['nova_senha'], self.context.get('usuario'))
         except serializers.ValidationError as erro:
@@ -137,5 +136,6 @@ class LoginSerializer(serializers.Serializer):
     """
     Utilizado somente para a documentação do Swagger para automatizar os campos na documentação.
     """
+
     email = serializers.EmailField()
     password = serializers.CharField()

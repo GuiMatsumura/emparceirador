@@ -1,6 +1,8 @@
-from rest_framework.permissions import BasePermission, SAFE_METHODS
 from rest_framework import permissions
+from rest_framework.permissions import SAFE_METHODS, BasePermission
+
 from .models import MesaJogador
+
 
 class IsAdmin(BasePermission):
     """
@@ -100,16 +102,14 @@ class IsJogadorNaMesa(permissions.BasePermission):
     ATENÇÃO: a verificação da mesa é feita em has_object_permission, então a view
     precisa chamar self.check_object_permissions(request, mesa) (ou usar get_object()).
     """
+
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated)
 
     def has_object_permission(self, request, view, obj):
         if not request.user.is_authenticated:
             return False
-        return MesaJogador.objects.filter(
-            id_mesa=obj,
-            id_usuario=request.user
-        ).exists()
+        return MesaJogador.objects.filter(id_mesa=obj, id_usuario=request.user).exists()
 
 
 def torneio_do_objeto(obj):

@@ -1,7 +1,7 @@
-from django.urls import path, include
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import TorneioViewSet, InscricaoViewSet, RodadaViewSet, MesaViewSet
+from .views import InscricaoViewSet, MesaViewSet, RodadaViewSet, TorneioViewSet
 
 # O DefaultRouter do DRF cria automaticamente as URLs para as ViewSets.
 # Ex: /torneios/ (GET, POST), /torneios/1/ (GET, PUT, DELETE)

@@ -3,13 +3,15 @@ Testes da API de torneios.
 
 Rodar com: python manage.py test --settings=core.settings_test
 """
+
 from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from usuarios.models import Usuario
-from .models import Torneio, Inscricao, Rodada, Mesa, MesaJogador, RankingParcial
+
+from .models import Inscricao, Mesa, MesaJogador, RankingParcial, Rodada, Torneio
 from .ranking_utils import calcular_e_salvar_ranking_parcial
 
 
@@ -120,24 +122,42 @@ class EditarEmparelhamentoTests(BaseTorneioTestCase):
         self.client.force_authenticate(self.loja)
 
     def test_alterar_time_do_jogador(self):
-        resposta = self.client.post(self.url, {
-            'acao': 'alterar_time_jogador', 'jogador_id': self.jogadores[0].id, 'novo_time': 2,
-        }, format='json')
+        resposta = self.client.post(
+            self.url,
+            {
+                'acao': 'alterar_time_jogador',
+                'jogador_id': self.jogadores[0].id,
+                'novo_time': 2,
+            },
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 200, resposta.data)
         self.assertEqual(MesaJogador.objects.get(id_usuario=self.jogadores[0]).time, 2)
 
     def test_mover_jogador_para_outra_mesa(self):
-        resposta = self.client.post(self.url, {
-            'acao': 'mover_jogador_para_mesa', 'jogador_id': self.jogadores[0].id, 'nova_mesa_id': self.mesa_2.id,
-        }, format='json')
+        resposta = self.client.post(
+            self.url,
+            {
+                'acao': 'mover_jogador_para_mesa',
+                'jogador_id': self.jogadores[0].id,
+                'nova_mesa_id': self.mesa_2.id,
+            },
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 200, resposta.data)
         self.assertEqual(MesaJogador.objects.get(id_usuario=self.jogadores[0]).id_mesa_id, self.mesa_2.id)
 
     def test_outra_loja_nao_edita(self):
         self.client.force_authenticate(self.outra_loja)
-        resposta = self.client.post(self.url, {
-            'acao': 'alterar_time_jogador', 'jogador_id': self.jogadores[0].id, 'novo_time': 2,
-        }, format='json')
+        resposta = self.client.post(
+            self.url,
+            {
+                'acao': 'alterar_time_jogador',
+                'jogador_id': self.jogadores[0].id,
+                'novo_time': 2,
+            },
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 403)
 
 
@@ -152,16 +172,19 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
         self.client.force_authenticate(self.outra_loja)
 
     def test_outra_loja_nao_edita_resultado_manual(self):
-        resposta = self.client.patch(f'/api/v1/torneios/mesas/{self.mesa.id}/editar_manual/',
-                                     {'time_vencedor': 1, 'pontuacao_time_1': 1, 'pontuacao_time_2': 0},
-                                     format='json')
+        resposta = self.client.patch(
+            f'/api/v1/torneios/mesas/{self.mesa.id}/editar_manual/',
+            {'time_vencedor': 1, 'pontuacao_time_1': 1, 'pontuacao_time_2': 0},
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 403)
         self.mesa.refresh_from_db()
         self.assertIsNone(self.mesa.time_vencedor)
 
     def test_outra_loja_nao_edita_jogadores_da_mesa(self):
-        resposta = self.client.patch(f'/api/v1/torneios/mesas/{self.mesa.id}/editar_jogadores/',
-                                     {'jogadores': []}, format='json')
+        resposta = self.client.patch(
+            f'/api/v1/torneios/mesas/{self.mesa.id}/editar_jogadores/', {'jogadores': []}, format='json'
+        )
         self.assertEqual(resposta.status_code, 403)
         self.assertEqual(MesaJogador.objects.filter(id_mesa=self.mesa).count(), 4)
 
@@ -176,26 +199,46 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
         self.assertTrue(Rodada.objects.filter(id=self.rodada.id).exists())
 
     def test_outra_loja_nao_cria_rodada_em_torneio_alheio(self):
-        resposta = self.client.post('/api/v1/torneios/rodadas/', {
-            'id_torneio': self.torneio.id, 'numero_rodada': 5, 'status': 'Emparelhamento',
-        }, format='json')
+        resposta = self.client.post(
+            '/api/v1/torneios/rodadas/',
+            {
+                'id_torneio': self.torneio.id,
+                'numero_rodada': 5,
+                'status': 'Emparelhamento',
+            },
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 403)
 
     def test_dona_edita_resultado_manual(self):
         self.client.force_authenticate(self.loja)
-        resposta = self.client.patch(f'/api/v1/torneios/mesas/{self.mesa.id}/editar_manual/',
-                                     {'time_vencedor': 1, 'pontuacao_time_1': 1, 'pontuacao_time_2': 0},
-                                     format='json')
+        resposta = self.client.patch(
+            f'/api/v1/torneios/mesas/{self.mesa.id}/editar_manual/',
+            {'time_vencedor': 1, 'pontuacao_time_1': 1, 'pontuacao_time_2': 0},
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 200)
 
     def test_loja_nao_transfere_torneio_para_outra_loja(self):
         self.client.force_authenticate(self.loja)
-        torneio = Torneio.objects.create(id_loja=self.loja, nome='Aberto', regras='r', status='Aberto',
-                                         data_inicio=timezone.now() + timedelta(days=2))
-        resposta = self.client.put(f'/api/v1/torneios/torneios/{torneio.id}/', {
-            'id_loja': self.outra_loja.id, 'nome': 'Novo nome', 'regras': 'r', 'status': 'Aberto',
-            'data_inicio': (timezone.now() + timedelta(days=2)).isoformat(),
-        }, format='json')
+        torneio = Torneio.objects.create(
+            id_loja=self.loja,
+            nome='Aberto',
+            regras='r',
+            status='Aberto',
+            data_inicio=timezone.now() + timedelta(days=2),
+        )
+        resposta = self.client.put(
+            f'/api/v1/torneios/torneios/{torneio.id}/',
+            {
+                'id_loja': self.outra_loja.id,
+                'nome': 'Novo nome',
+                'regras': 'r',
+                'status': 'Aberto',
+                'data_inicio': (timezone.now() + timedelta(days=2)).isoformat(),
+            },
+            format='json',
+        )
         self.assertEqual(resposta.status_code, 200, resposta.data)
         torneio.refresh_from_db()
         self.assertEqual(torneio.id_loja_id, self.loja.id)
@@ -203,12 +246,16 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
 
 
 class InscricaoTests(BaseTorneioTestCase):
-
     def setUp(self):
         super().setUp()
         self.aberto = Torneio.objects.create(
-            id_loja=self.loja, nome='Aberto', regras='r', status='Aberto',
-            vagas_limitadas=True, qnt_vagas=2, data_inicio=timezone.now() + timedelta(days=1),
+            id_loja=self.loja,
+            nome='Aberto',
+            regras='r',
+            status='Aberto',
+            vagas_limitadas=True,
+            qnt_vagas=2,
+            data_inicio=timezone.now() + timedelta(days=1),
         )
 
     def test_desinscrever_grava_data_saida(self):
@@ -237,8 +284,9 @@ class InscricaoTests(BaseTorneioTestCase):
         Inscricao.objects.filter(id_usuario=cancelado).update(status='Cancelado')
         novo = self.criar_usuario('novo@teste.com')
         self.client.force_authenticate(self.loja)
-        resposta = self.client.post('/api/v1/torneios/inscricoes/',
-                                    {'id_torneio': self.aberto.id, 'id_usuario': novo.id}, format='json')
+        resposta = self.client.post(
+            '/api/v1/torneios/inscricoes/', {'id_torneio': self.aberto.id, 'id_usuario': novo.id}, format='json'
+        )
         self.assertEqual(resposta.status_code, 201, resposta.data)
 
     def test_jogador_nao_reativa_propria_inscricao(self):
@@ -264,11 +312,11 @@ class InscricaoTests(BaseTorneioTestCase):
 
 
 class IniciarTorneioTests(BaseTorneioTestCase):
-
     def test_inscricao_inativa_nao_e_emparelhada(self):
         """B8 — apenas inscrições com status 'Inscrito' entram nas mesas."""
-        torneio = Torneio.objects.create(id_loja=self.loja, nome='T', regras='r', status='Aberto',
-                                         data_inicio=timezone.now() + timedelta(days=1))
+        torneio = Torneio.objects.create(
+            id_loja=self.loja, nome='T', regras='r', status='Aberto', data_inicio=timezone.now() + timedelta(days=1)
+        )
         jogadores = self.criar_jogadores(5, torneio=torneio)
         Inscricao.objects.filter(id_usuario=jogadores[4]).update(status='Inativo')
         self.client.force_authenticate(self.loja)
@@ -281,8 +329,9 @@ class IniciarTorneioTests(BaseTorneioTestCase):
             self.assertNotIn(jogadores[4].id, self.jogadores_em_mesas(rodada))
 
     def test_iniciar_registra_data_inicio_da_rodada(self):
-        torneio = Torneio.objects.create(id_loja=self.loja, nome='T', regras='r', status='Aberto',
-                                         data_inicio=timezone.now() + timedelta(days=1))
+        torneio = Torneio.objects.create(
+            id_loja=self.loja, nome='T', regras='r', status='Aberto', data_inicio=timezone.now() + timedelta(days=1)
+        )
         self.criar_jogadores(4, torneio=torneio)
         self.client.force_authenticate(self.loja)
         self.client.post(f'/api/v1/torneios/torneios/{torneio.id}/iniciar/')
@@ -290,7 +339,6 @@ class IniciarTorneioTests(BaseTorneioTestCase):
 
 
 class TorneioSemRodadaTests(BaseTorneioTestCase):
-
     def test_proxima_rodada_sem_rodadas_retorna_400(self):
         self.client.force_authenticate(self.loja)
         resposta = self.client.post(f'/api/v1/torneios/torneios/{self.torneio.id}/proxima_rodada/')
@@ -307,8 +355,13 @@ class TorneioAtrasadoTests(BaseTorneioTestCase):
 
     def setUp(self):
         super().setUp()
-        self.atrasado = Torneio.objects.create(id_loja=self.loja, nome='Atrasado', regras='r', status='Aberto',
-                                               data_inicio=timezone.now() - timedelta(hours=3))
+        self.atrasado = Torneio.objects.create(
+            id_loja=self.loja,
+            nome='Atrasado',
+            regras='r',
+            status='Aberto',
+            data_inicio=timezone.now() - timedelta(hours=3),
+        )
         self.criar_jogadores(4, torneio=self.atrasado)
 
     def test_some_da_listagem(self):
@@ -326,7 +379,6 @@ class TorneioAtrasadoTests(BaseTorneioTestCase):
 
 
 class ProximaRodadaTests(BaseTorneioTestCase):
-
     def avancar(self):
         self.client.force_authenticate(self.loja)
         return self.client.post(f'/api/v1/torneios/torneios/{self.torneio.id}/proxima_rodada/')
@@ -378,7 +430,6 @@ class ProximaRodadaTests(BaseTorneioTestCase):
 
 
 class RankingTests(BaseTorneioTestCase):
-
     def test_inscrito_depois_da_rodada_nao_ganha_bye_retroativo(self):
         """B9"""
         a, b, c, d = self.criar_jogadores(4)

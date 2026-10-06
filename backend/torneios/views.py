@@ -1,30 +1,42 @@
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
-
-from django_filters import rest_framework as filters
-from rest_framework import viewsets, permissions, status, serializers
-from rest_framework.decorators import action
-from rest_framework.response import Response
-
-from django.utils import timezone
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Q, Case, When, Value, IntegerField
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django_filters import rest_framework as filters
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import permissions, serializers, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
 
-from .models import Torneio, Inscricao, Rodada, Mesa, MesaJogador, RankingParcial
 from usuarios.models import Usuario
-from .permissoes import IsLojaOuAdmin, IsApenasLeitura, IsJogadorNaMesa, IsDonoDoTorneioOuAdmin
-from .serializers import (
-    TorneioSerializer, InscricaoSerializer, InscricaoCreateSerializer, InscricaoLojaSerializer, RodadaSerializer,
-    MesaSerializer, MesaDetailSerializer, ReportarResultadoSerializer,
-    EditarJogadoresMesaSerializer, VisualizacaoMesaJogadorSerializer, InscricaoResponseSerializer, IniciarRodadaSerializer
-)
-from .ranking_utils import calcular_e_salvar_ranking_parcial, construir_historico_ate_rodada
+
 from .emparelhamento import (
-    inscricoes_ativas, jogadores_ativos_ids, limpar_mesas, emparelhar_aleatorio, emparelhar_swiss
+    emparelhar_aleatorio,
+    emparelhar_swiss,
+    inscricoes_ativas,
+    jogadores_ativos_ids,
+    limpar_mesas,
+)
+from .models import Inscricao, Mesa, MesaJogador, RankingParcial, Rodada, Torneio
+from .permissoes import IsApenasLeitura, IsDonoDoTorneioOuAdmin, IsJogadorNaMesa, IsLojaOuAdmin
+from .ranking_utils import calcular_e_salvar_ranking_parcial, construir_historico_ate_rodada
+from .serializers import (
+    EditarJogadoresMesaSerializer,
+    IniciarRodadaSerializer,
+    InscricaoCreateSerializer,
+    InscricaoLojaSerializer,
+    InscricaoResponseSerializer,
+    InscricaoSerializer,
+    MesaDetailSerializer,
+    MesaSerializer,
+    ReportarResultadoSerializer,
+    RodadaSerializer,
+    TorneioSerializer,
+    VisualizacaoMesaJogadorSerializer,
 )
 
 # Permissões para ações de gestão: precisa ser LOJA/ADMIN e, se LOJA, dona do torneio do objeto.
@@ -34,7 +46,7 @@ PERMISSOES_GESTAO = [IsLojaOuAdmin, IsDonoDoTorneioOuAdmin]
 def verificar_dono_do_torneio(user, torneio):
     """Levanta 403 se o usuário não for ADMIN nem a LOJA dona do torneio."""
     if user.tipo != 'ADMIN' and torneio.id_loja_id != user.id:
-        raise PermissionDenied("Você só pode gerenciar seus próprios torneios.")
+        raise PermissionDenied('Você só pode gerenciar seus próprios torneios.')
 
 
 # ViewSets fornecem uma implementação completa de CRUD (Create, Retrieve, Update, Destroy)
@@ -43,68 +55,66 @@ def verificar_dono_do_torneio(user, torneio):
 
 class RodadaEmparelhamentoSerializer(serializers.Serializer):
     """Serializer para dados de emparelhamento da rodada"""
+
     jogadores_disponiveis = serializers.ListField(
         child=serializers.DictField(),
-        help_text="Lista de jogadores disponíveis para emparelhar: [{'id': 1, 'username': 'João'}]"
+        help_text="Lista de jogadores disponíveis para emparelhar: [{'id': 1, 'username': 'João'}]",
     )
     mesas_criadas = serializers.ListField(
-        child=serializers.DictField(),
-        help_text="Lista de mesas já criadas com seus jogadores"
+        child=serializers.DictField(), help_text='Lista de mesas já criadas com seus jogadores'
     )
-    status_emparelhamento = serializers.CharField(help_text="Status atual do emparelhamento")
+    status_emparelhamento = serializers.CharField(help_text='Status atual do emparelhamento')
 
 
 class EmparelhamentoAutomaticoSerializer(serializers.Serializer):
     """Serializer para configuração do emparelhamento automático"""
+
     tipo = serializers.ChoiceField(
         choices=['random', 'swiss'],
         default='swiss',
-        help_text="Tipo de emparelhamento: random (aleatório) ou swiss (por pontuação)"
+        help_text='Tipo de emparelhamento: random (aleatório) ou swiss (por pontuação)',
     )
 
 
 class EditarEmparelhamentoSerializer(serializers.Serializer):
     """Serializer para editar emparelhamento manualmente"""
+
     acao = serializers.ChoiceField(
-        choices=['mover_jogador_para_mesa', 'alterar_time_jogador'],
-        help_text="Ação a ser realizada"
+        choices=['mover_jogador_para_mesa', 'alterar_time_jogador'], help_text='Ação a ser realizada'
     )
-    jogador_id = serializers.IntegerField(
-        help_text="ID do jogador a ser movido"
-    )
+    jogador_id = serializers.IntegerField(help_text='ID do jogador a ser movido')
     nova_mesa_id = serializers.IntegerField(
-        required=False,
-        help_text="ID da nova mesa (apenas para mover_jogador_para_mesa)"
+        required=False, help_text='ID da nova mesa (apenas para mover_jogador_para_mesa)'
     )
     novo_time = serializers.ChoiceField(
-        choices=[1, 2],
-        required=False,
-        help_text="Novo time para o jogador (apenas para alterar_time_jogador)"
+        choices=[1, 2], required=False, help_text='Novo time para o jogador (apenas para alterar_time_jogador)'
     )
 
     def validate(self, data):
         acao = data.get('acao')
 
         if acao == 'mover_jogador_para_mesa' and not data.get('nova_mesa_id'):
-            raise serializers.ValidationError("nova_mesa_id é obrigatório para mover_jogador_para_mesa")
+            raise serializers.ValidationError('nova_mesa_id é obrigatório para mover_jogador_para_mesa')
 
         if acao == 'alterar_time_jogador' and not data.get('novo_time'):
-            raise serializers.ValidationError("novo_time é obrigatório para alterar_time_jogador")
+            raise serializers.ValidationError('novo_time é obrigatório para alterar_time_jogador')
 
         return data
 
+
 class TorneioFilter(filters.FilterSet):
     status = filters.CharFilter(method='filter_status')
-    
+
     def filter_status(self, queryset, name, value):
         # Divide por vírgula e remove espaços extras
         status_list = [s.strip() for s in value.split(',')]
         return queryset.filter(status__in=status_list)
-    
+
     class Meta:
         model = Torneio
         fields = ['status']
-        
+
+
 class TorneioViewSet(viewsets.ModelViewSet):
     """
     Endpoint da API para gerenciamento de torneios.
@@ -113,6 +123,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
     - GET: Qualquer usuário pode visualizar
     - POST, PUT, DELETE: Apenas Lojas e Admins são permitidos
     """
+
     queryset = Torneio.objects.all()
     serializer_class = TorneioSerializer
     http_method_names = ['get', 'post', 'put', 'delete', 'head', 'options']
@@ -150,7 +161,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
                 When(status='Em Andamento', then=Value(1)),
                 When(status='Aberto', then=Value(2)),
                 default=Value(3),
-                output_field=IntegerField()
+                output_field=IntegerField(),
             )
         ).order_by('prioridade', 'data_inicio')
 
@@ -169,11 +180,8 @@ class TorneioViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         request_body=TorneioSerializer,
-        responses={
-            201: TorneioSerializer,
-            400: 'Erro de validação'
-        },
-        operation_summary="Criar novo torneio",
+        responses={201: TorneioSerializer, 400: 'Erro de validação'},
+        operation_summary='Criar novo torneio',
         operation_description="""
         Cria um novo torneio com os seguintes campos:
         
@@ -199,7 +207,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         **Observações:**
         - Para usuários tipo LOJA: o campo id_loja é definido automaticamente
         - Para usuários tipo ADMIN: pode especificar o id_loja manualmente
-        """
+        """,
     )
     def perform_create(self, serializer):
         """
@@ -232,19 +240,19 @@ class TorneioViewSet(viewsets.ModelViewSet):
         method='post',
         responses={
             200: openapi.Response(
-                description="Torneio cancelado com sucesso",
+                description='Torneio cancelado com sucesso',
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'message': openapi.Schema(type=openapi.TYPE_STRING),
                         'torneio': openapi.Schema(type=openapi.TYPE_OBJECT),
-                    }
-                )
+                    },
+                ),
             ),
             400: 'Erro de validação',
-            403: 'Permissão negada'
+            403: 'Permissão negada',
         },
-        operation_summary="Cancelar torneio",
+        operation_summary='Cancelar torneio',
         operation_description="""
         Cancela um torneio marcando seu status como 'Cancelado'.
 
@@ -255,7 +263,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         **Ações:**
         - Muda o status do torneio para 'Cancelado'
         - Mantém todas as inscrições e dados para histórico
-        """
+        """,
     )
     @action(detail=True, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def cancelar(self, request, pk=None):
@@ -268,16 +276,15 @@ class TorneioViewSet(viewsets.ModelViewSet):
         # Validação: Status deve ser 'Aberto'
         if torneio.status != 'Aberto':
             return Response(
-                {"detail": f"Torneio deve estar com status 'Aberto'. Status atual: {torneio.status}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f"Torneio deve estar com status 'Aberto'. Status atual: {torneio.status}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Confirmação de cancelamento (todos os dados serão mantidos)
         confirme_cancelamento = request.data.get('confirmacao', False)
         if not confirme_cancelamento:
             return Response(
-                {"detail": "Envie confirmacao: true para confirmar o cancelamento"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': 'Envie confirmacao: true para confirmar o cancelamento'}, status=status.HTTP_400_BAD_REQUEST
             )
 
         with transaction.atomic():
@@ -285,16 +292,19 @@ class TorneioViewSet(viewsets.ModelViewSet):
             torneio.status = 'Cancelado'
             torneio.save(update_fields=['status'])
 
-        return Response({
-            'message': 'Torneio cancelado com sucesso. Todos os dados foram mantidos para histórico.',
-            'torneio': TorneioSerializer(torneio).data
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': 'Torneio cancelado com sucesso. Todos os dados foram mantidos para histórico.',
+                'torneio': TorneioSerializer(torneio).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         responses={
             200: openapi.Response(
-                description="Torneio iniciado com sucesso",
+                description='Torneio iniciado com sucesso',
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -302,13 +312,13 @@ class TorneioViewSet(viewsets.ModelViewSet):
                         'rodada': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'mesas_criadas': openapi.Schema(type=openapi.TYPE_INTEGER),
                         'total_jogadores': openapi.Schema(type=openapi.TYPE_INTEGER),
-                    }
-                )
+                    },
+                ),
             ),
             400: 'Erro de validação',
-            403: 'Permissão negada'
+            403: 'Permissão negada',
         },
-        operation_summary="Iniciar torneio",
+        operation_summary='Iniciar torneio',
         operation_description="""
         Inicia um torneio criando a primeira rodada e emparelhando jogadores.
         
@@ -322,7 +332,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         - Cria a Rodada 1
         - Emparelha jogadores aleatoriamente em mesas 2v2
         - Se número de jogadores for ímpar ou sobrar menos de 4, jogadores recebem bye
-        """
+        """,
     )
     @action(detail=True, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def iniciar(self, request, pk=None):
@@ -330,22 +340,22 @@ class TorneioViewSet(viewsets.ModelViewSet):
         Inicia o torneio criando a primeira rodada e emparelhando jogadores.
         """
         torneio = self.get_object()
-        
+
         # Validação: Status deve ser 'Aberto'
         if torneio.status != 'Aberto':
             return Response(
-                {"detail": f"Torneio deve estar com status 'Aberto'. Status atual: {torneio.status}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f"Torneio deve estar com status 'Aberto'. Status atual: {torneio.status}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         jogadores = jogadores_ativos_ids(torneio)
         total_jogadores = len(jogadores)
 
         # Validação: Mínimo 4 jogadores
         if total_jogadores < 4:
             return Response(
-                {"detail": f"É necessário ter no mínimo 4 jogadores inscritos. Total atual: {total_jogadores}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f'É necessário ter no mínimo 4 jogadores inscritos. Total atual: {total_jogadores}'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
@@ -355,46 +365,46 @@ class TorneioViewSet(viewsets.ModelViewSet):
 
             # Cria Rodada 1 já em andamento (emparelhamento aleatório, sem fase de edição)
             rodada = Rodada.objects.create(
-                id_torneio=torneio,
-                numero_rodada=1,
-                status='Em Andamento',
-                data_inicio=timezone.now()
+                id_torneio=torneio, numero_rodada=1, status='Em Andamento', data_inicio=timezone.now()
             )
 
             mesas_criadas = emparelhar_aleatorio(rodada, jogadores)
 
             # Jogadores restantes (se houver) recebem bye implícito (não jogam nesta rodada)
             jogadores_com_bye = total_jogadores % 4
-        
-        message = f"Torneio iniciado com sucesso. {mesas_criadas} mesa(s) criada(s)."
+
+        message = f'Torneio iniciado com sucesso. {mesas_criadas} mesa(s) criada(s).'
         if jogadores_com_bye > 0:
-            message += f" {jogadores_com_bye} jogador(es) recebeu(ram) bye nesta rodada."
-        
-        return Response({
-            'message': message,
-            'rodada': RodadaSerializer(rodada).data,
-            'mesas_criadas': mesas_criadas,
-            'total_jogadores': total_jogadores
-        }, status=status.HTTP_200_OK)
+            message += f' {jogadores_com_bye} jogador(es) recebeu(ram) bye nesta rodada.'
+
+        return Response(
+            {
+                'message': message,
+                'rodada': RodadaSerializer(rodada).data,
+                'mesas_criadas': mesas_criadas,
+                'total_jogadores': total_jogadores,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         responses={
             200: openapi.Response(
-                description="Nova rodada criada com sucesso",
+                description='Nova rodada criada com sucesso',
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'message': openapi.Schema(type=openapi.TYPE_STRING),
                         'rodada': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'mesas_criadas': openapi.Schema(type=openapi.TYPE_INTEGER),
-                    }
-                )
+                    },
+                ),
             ),
             400: 'Erro de validação',
-            403: 'Permissão negada'
+            403: 'Permissão negada',
         },
-        operation_summary="Avançar para próxima rodada",
+        operation_summary='Avançar para próxima rodada',
         operation_description="""
         Finaliza a rodada atual e cria a próxima rodada com emparelhamento Swiss.
         
@@ -409,7 +419,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         - Ordena jogadores por pontuação (maior para menor)
         - Emparelha jogadores com pontuações similares (Swiss pairing)
         - Cria nova rodada
-        """
+        """,
     )
     @action(detail=True, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def proxima_rodada(self, request, pk=None):
@@ -417,47 +427,43 @@ class TorneioViewSet(viewsets.ModelViewSet):
         Avança para a próxima rodada do torneio.
         """
         torneio = self.get_object()
-        
+
         # Validação: Status deve ser 'Em Andamento'
         if torneio.status != 'Em Andamento':
             return Response(
-                {"detail": f"Torneio deve estar 'Em Andamento'. Status atual: {torneio.status}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f"Torneio deve estar 'Em Andamento'. Status atual: {torneio.status}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Busca rodada atual
         rodada_atual = Rodada.objects.filter(id_torneio=torneio).order_by('-numero_rodada').first()
         if rodada_atual is None:
             return Response(
-                {"detail": "Nenhuma rodada encontrada para este torneio."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': 'Nenhuma rodada encontrada para este torneio.'}, status=status.HTTP_400_BAD_REQUEST
             )
 
         # Validação: Rodada deve estar Em Andamento
         status_normalizado = rodada_atual.status.strip().lower().replace(' ', '_')
         if status_normalizado != 'em_andamento':
             return Response(
-                {"detail": f"Rodada atual deve estar 'Em Andamento'. Status atual: {rodada_atual.status}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f"Rodada atual deve estar 'Em Andamento'. Status atual: {rodada_atual.status}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Validação: Todas as mesas devem ter resultado reportado
-        mesas_sem_resultado = Mesa.objects.filter(
-            id_rodada=rodada_atual,
-            time_vencedor__isnull=True
-        ).count()
+        mesas_sem_resultado = Mesa.objects.filter(id_rodada=rodada_atual, time_vencedor__isnull=True).count()
 
         if mesas_sem_resultado > 0:
             return Response(
-                {"detail": f"Existem {mesas_sem_resultado} mesa(s) sem resultado reportado na rodada atual."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f'Existem {mesas_sem_resultado} mesa(s) sem resultado reportado na rodada atual.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Validação: Não exceder número máximo de rodadas
         if torneio.quantidade_rodadas and rodada_atual.numero_rodada >= torneio.quantidade_rodadas:
             return Response(
-                {"detail": f"Número máximo de rodadas ({torneio.quantidade_rodadas}) atingido. Finalize o torneio."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f'Número máximo de rodadas ({torneio.quantidade_rodadas}) atingido. Finalize o torneio.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
@@ -471,33 +477,35 @@ class TorneioViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 # Log do erro mas não bloqueia a criação da próxima rodada
                 import logging
+
                 logger = logging.getLogger(__name__)
-                logger.error(f"Erro ao calcular ranking da rodada {rodada_atual.numero_rodada}: {str(e)}")
+                logger.error(f'Erro ao calcular ranking da rodada {rodada_atual.numero_rodada}: {str(e)}')
 
             # Cria nova rodada no status "Emparelhamento" e inicia emparelhamento automático
             nova_rodada = Rodada.objects.create(
-                id_torneio=torneio,
-                numero_rodada=rodada_atual.numero_rodada + 1,
-                status='Emparelhamento'
+                id_torneio=torneio, numero_rodada=rodada_atual.numero_rodada + 1, status='Emparelhamento'
             )
 
             # Executa emparelhamento automático (Swiss) imediatamente
             mesas_criadas_count = emparelhar_swiss(nova_rodada, torneio)
 
             # Atualiza a mensagem de resposta
-            message = f"Rodada {rodada_atual.numero_rodada} finalizada. Nova rodada {nova_rodada.numero_rodada} criada com {mesas_criadas_count} mesa(s) emparelhada(s) automaticamente."
+            message = f'Rodada {rodada_atual.numero_rodada} finalizada. Nova rodada {nova_rodada.numero_rodada} criada com {mesas_criadas_count} mesa(s) emparelhada(s) automaticamente.'
 
-        return Response({
-            'message': message,
-            'rodada_anterior': RodadaSerializer(rodada_atual).data,
-            'nova_rodada': RodadaSerializer(nova_rodada).data
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': message,
+                'rodada_anterior': RodadaSerializer(rodada_atual).data,
+                'nova_rodada': RodadaSerializer(nova_rodada).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         responses={
             200: openapi.Response(
-                description="Torneio finalizado com sucesso",
+                description='Torneio finalizado com sucesso',
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -511,17 +519,17 @@ class TorneioViewSet(viewsets.ModelViewSet):
                                     'jogador_id': openapi.Schema(type=openapi.TYPE_INTEGER),
                                     'jogador_nome': openapi.Schema(type=openapi.TYPE_STRING),
                                     'pontos': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                }
-                            )
+                                },
+                            ),
                         ),
                         'total_rodadas': openapi.Schema(type=openapi.TYPE_INTEGER),
-                    }
-                )
+                    },
+                ),
             ),
             400: 'Erro de validação',
-            403: 'Permissão negada'
+            403: 'Permissão negada',
         },
-        operation_summary="Finalizar torneio",
+        operation_summary='Finalizar torneio',
         operation_description="""
         Finaliza o torneio e gera o ranking final.
         
@@ -534,7 +542,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         - Calcula pontuação final de todos os jogadores
         - Gera ranking ordenado por pontuação
         - Muda status do torneio para 'Finalizado'
-        """
+        """,
     )
     @action(detail=True, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def finalizar(self, request, pk=None):
@@ -542,34 +550,30 @@ class TorneioViewSet(viewsets.ModelViewSet):
         Finaliza o torneio e gera o ranking final.
         """
         torneio = self.get_object()
-        
+
         # Validação: Status deve ser 'Em Andamento'
         if torneio.status != 'Em Andamento':
             return Response(
-                {"detail": f"Torneio deve estar 'Em Andamento'. Status atual: {torneio.status}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f"Torneio deve estar 'Em Andamento'. Status atual: {torneio.status}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Busca rodada atual
         rodada_atual = Rodada.objects.filter(id_torneio=torneio).order_by('-numero_rodada').first()
         if rodada_atual is None:
             return Response(
-                {"detail": "Nenhuma rodada encontrada para este torneio."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': 'Nenhuma rodada encontrada para este torneio.'}, status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Validação: Todas as mesas devem ter resultado reportado
-        mesas_sem_resultado = Mesa.objects.filter(
-            id_rodada=rodada_atual,
-            time_vencedor__isnull=True
-        ).count()
-        
+        mesas_sem_resultado = Mesa.objects.filter(id_rodada=rodada_atual, time_vencedor__isnull=True).count()
+
         if mesas_sem_resultado > 0:
             return Response(
-                {"detail": f"Existem {mesas_sem_resultado} mesa(s) sem resultado reportado na rodada atual."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f'Existem {mesas_sem_resultado} mesa(s) sem resultado reportado na rodada atual.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         with transaction.atomic():
             # Finaliza rodada atual
             rodada_atual.status = 'Finalizada'
@@ -579,24 +583,27 @@ class TorneioViewSet(viewsets.ModelViewSet):
             ranking_calculado = calcular_e_salvar_ranking_parcial(torneio, rodada_atual.numero_rodada)
 
             # Busca ranking do cache para retornar com todas as informações
-            ranking_cache = RankingParcial.objects.filter(
-                id_torneio=torneio,
-                rodada_numero=rodada_atual.numero_rodada
-            ).select_related('id_usuario').order_by('posicao')
+            ranking_cache = (
+                RankingParcial.objects.filter(id_torneio=torneio, rodada_numero=rodada_atual.numero_rodada)
+                .select_related('id_usuario')
+                .order_by('posicao')
+            )
 
             # Formata ranking para resposta
             ranking = []
             for item in ranking_cache:
-                ranking.append({
-                    'posicao': item.posicao,
-                    'jogador_id': item.id_usuario.id,
-                    'jogador_nome': item.id_usuario.username,
-                    'pontos': item.pontos_totais,
-                    'mw_percentage': float(item.mw_percentage),
-                    'omw_percentage': float(item.omw_percentage),
-                    'pmw_percentage': float(item.pmw_percentage),
-                    'balanco': float(item.balanco)
-                })
+                ranking.append(
+                    {
+                        'posicao': item.posicao,
+                        'jogador_id': item.id_usuario.id,
+                        'jogador_nome': item.id_usuario.username,
+                        'pontos': item.pontos_totais,
+                        'mw_percentage': float(item.mw_percentage),
+                        'omw_percentage': float(item.omw_percentage),
+                        'pmw_percentage': float(item.pmw_percentage),
+                        'balanco': float(item.balanco),
+                    }
+                )
 
             # Muda status do torneio para 'Finalizado'
             torneio.status = 'Finalizado'
@@ -604,11 +611,10 @@ class TorneioViewSet(viewsets.ModelViewSet):
 
             total_rodadas = Rodada.objects.filter(id_torneio=torneio).count()
 
-        return Response({
-            'message': 'Torneio finalizado com sucesso',
-            'ranking': ranking,
-            'total_rodadas': total_rodadas
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {'message': 'Torneio finalizado com sucesso', 'ranking': ranking, 'total_rodadas': total_rodadas},
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='get',
@@ -618,12 +624,12 @@ class TorneioViewSet(viewsets.ModelViewSet):
                 openapi.IN_QUERY,
                 description='ID da rodada para calcular ranking até essa rodada',
                 type=openapi.TYPE_INTEGER,
-                required=True
+                required=True,
             )
         ],
         responses={
             200: openapi.Response(
-                description="Ranking de uma rodada específica",
+                description='Ranking de uma rodada específica',
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
@@ -637,22 +643,22 @@ class TorneioViewSet(viewsets.ModelViewSet):
                                     'jogador_id': openapi.Schema(type=openapi.TYPE_INTEGER),
                                     'jogador_nome': openapi.Schema(type=openapi.TYPE_STRING),
                                     'pontos': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                }
-                            )
+                                },
+                            ),
                         ),
-                    }
-                )
+                    },
+                ),
             ),
             400: 'Erro de validação',
-            404: 'Rodada não encontrada'
+            404: 'Rodada não encontrada',
         },
-        operation_summary="Obter ranking parcial de uma rodada",
+        operation_summary='Obter ranking parcial de uma rodada',
         operation_description="""
         Retorna o ranking dos jogadores até a rodada específica (acumulado).
         
         **Parâmetros Query:**
         - rodada_id: ID da rodada para calcular ranking até essa rodada
-        """
+        """,
     )
     @action(detail=True, methods=['get'], permission_classes=[IsLojaOuAdmin | IsApenasLeitura])
     def ranking_rodada(self, request, pk=None):
@@ -664,54 +670,26 @@ class TorneioViewSet(viewsets.ModelViewSet):
         rodada_id = request.query_params.get('rodada_id')
 
         if not rodada_id:
-            return Response(
-                {"detail": "Parâmetro 'rodada_id' é obrigatório"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'detail': "Parâmetro 'rodada_id' é obrigatório"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             rodada_alvo = Rodada.objects.get(id=rodada_id, id_torneio=torneio)
         except Rodada.DoesNotExist:
-            return Response(
-                {"detail": "Rodada não encontrada neste torneio"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'detail': 'Rodada não encontrada neste torneio'}, status=status.HTTP_404_NOT_FOUND)
 
         # Verifica se ranking está em cache
-        ranking_cache = RankingParcial.objects.filter(
-            id_torneio=torneio,
-            rodada_numero=rodada_alvo.numero_rodada
-        ).select_related('id_usuario').order_by('posicao')
+        ranking_cache = (
+            RankingParcial.objects.filter(id_torneio=torneio, rodada_numero=rodada_alvo.numero_rodada)
+            .select_related('id_usuario')
+            .order_by('posicao')
+        )
 
         if ranking_cache.exists():
             # Usa cache existente (otimizado!)
             ranking = []
             for item in ranking_cache:
-                ranking.append({
-                    'posicao': item.posicao,
-                    'jogador_id': item.id_usuario.id,
-                    'jogador_nome': item.id_usuario.username,
-                    'pontos': item.pontos_totais,
-                    'mw_percentage': float(item.mw_percentage),
-                    'omw_percentage': float(item.omw_percentage),
-                    'pmw_percentage': float(item.pmw_percentage),
-                    'balanco': float(item.balanco)
-                })
-        else:
-            # Cache não existe - calcula sob demanda
-            if rodada_alvo.status == 'Finalizada':
-                # Rodada finalizada - calcula e salva no cache
-                calcular_e_salvar_ranking_parcial(torneio, rodada_alvo.numero_rodada)
-
-                # Busca do cache recém criado
-                ranking_cache = RankingParcial.objects.filter(
-                    id_torneio=torneio,
-                    rodada_numero=rodada_alvo.numero_rodada
-                ).select_related('id_usuario').order_by('posicao')
-
-                ranking = []
-                for item in ranking_cache:
-                    ranking.append({
+                ranking.append(
+                    {
                         'posicao': item.posicao,
                         'jogador_id': item.id_usuario.id,
                         'jogador_nome': item.id_usuario.username,
@@ -719,40 +697,64 @@ class TorneioViewSet(viewsets.ModelViewSet):
                         'mw_percentage': float(item.mw_percentage),
                         'omw_percentage': float(item.omw_percentage),
                         'pmw_percentage': float(item.pmw_percentage),
-                        'balanco': float(item.balanco)
-                    })
+                        'balanco': float(item.balanco),
+                    }
+                )
+        else:
+            # Cache não existe - calcula sob demanda
+            if rodada_alvo.status == 'Finalizada':
+                # Rodada finalizada - calcula e salva no cache
+                calcular_e_salvar_ranking_parcial(torneio, rodada_alvo.numero_rodada)
+
+                # Busca do cache recém criado
+                ranking_cache = (
+                    RankingParcial.objects.filter(id_torneio=torneio, rodada_numero=rodada_alvo.numero_rodada)
+                    .select_related('id_usuario')
+                    .order_by('posicao')
+                )
+
+                ranking = []
+                for item in ranking_cache:
+                    ranking.append(
+                        {
+                            'posicao': item.posicao,
+                            'jogador_id': item.id_usuario.id,
+                            'jogador_nome': item.id_usuario.username,
+                            'pontos': item.pontos_totais,
+                            'mw_percentage': float(item.mw_percentage),
+                            'omw_percentage': float(item.omw_percentage),
+                            'pmw_percentage': float(item.pmw_percentage),
+                            'balanco': float(item.balanco),
+                        }
+                    )
             else:
                 # Rodada ainda não finalizada: só pontos acumulados das rodadas finalizadas anteriores
-                anteriores = Rodada.objects.filter(
-                    id_torneio=torneio,
-                    numero_rodada__lt=rodada_alvo.numero_rodada,
-                    status='Finalizada'
-                ).order_by('-numero_rodada').first()
+                anteriores = (
+                    Rodada.objects.filter(
+                        id_torneio=torneio, numero_rodada__lt=rodada_alvo.numero_rodada, status='Finalizada'
+                    )
+                    .order_by('-numero_rodada')
+                    .first()
+                )
                 pontos_base = (
-                    construir_historico_ate_rodada(torneio, anteriores.numero_rodada)['mw_base']
-                    if anteriores else {}
+                    construir_historico_ate_rodada(torneio, anteriores.numero_rodada)['mw_base'] if anteriores else {}
                 )
                 ativos = jogadores_ativos_ids(torneio)
                 nomes = {u.id: u.username for u in Usuario.objects.filter(id__in=ativos)}
                 jogadores_ordenados = sorted(
-                    ((j, pontos_base.get(j, 0)) for j in ativos),
-                    key=lambda x: x[1],
-                    reverse=True
+                    ((j, pontos_base.get(j, 0)) for j in ativos), key=lambda x: x[1], reverse=True
                 )
                 ranking = [
                     {
                         'posicao': posicao,
                         'jogador_id': usuario_id,
                         'jogador_nome': nomes.get(usuario_id, ''),
-                        'pontos': pontos
+                        'pontos': pontos,
                     }
                     for posicao, (usuario_id, pontos) in enumerate(jogadores_ordenados, start=1)
                 ]
 
-        return Response({
-            'rodada_numero': rodada_alvo.numero_rodada,
-            'ranking': ranking
-        }, status=status.HTTP_200_OK)
+        return Response({'rodada_numero': rodada_alvo.numero_rodada, 'ranking': ranking}, status=status.HTTP_200_OK)
 
 
 class InscricaoViewSet(viewsets.ModelViewSet):
@@ -780,6 +782,7 @@ class InscricaoViewSet(viewsets.ModelViewSet):
         • Lojas: Podem remover inscrições de seus torneios
         • Admins: Podem remover qualquer inscrição
     """
+
     queryset = Inscricao.objects.all()
     serializer_class = InscricaoSerializer
     http_method_names = ['get', 'post', 'put', 'delete', 'head', 'options']  # remove patch
@@ -831,34 +834,26 @@ class InscricaoViewSet(viewsets.ModelViewSet):
             type=openapi.TYPE_OBJECT,
             properties={
                 'id_torneio': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID do torneio para inscrição',
-                    example=1
+                    type=openapi.TYPE_INTEGER, description='ID do torneio para inscrição', example=1
                 ),
                 'decklist': openapi.Schema(
                     type=openapi.TYPE_STRING,
                     description='Lista de cartas do deck do jogador (opcional)',
-                    example='4x Lightning Bolt\n4x Counterspell\n...'
+                    example='4x Lightning Bolt\n4x Counterspell\n...',
                 ),
                 'id_usuario': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID do usuário (apenas para loja/admin)',
-                    example=2
+                    type=openapi.TYPE_INTEGER, description='ID do usuário (apenas para loja/admin)', example=2
                 ),
                 'status': openapi.Schema(
                     type=openapi.TYPE_STRING,
                     description='Status da inscrição (apenas para loja/admin)',
-                    example='Inscrito'
-                )
+                    example='Inscrito',
+                ),
             },
-            required=['id_torneio']
+            required=['id_torneio'],
         ),
-        responses={
-            201: InscricaoResponseSerializer,
-            400: 'Erro de validação',
-            403: 'Permissão negada'
-        },
-        operation_summary="Criar inscrição em torneio",
+        responses={201: InscricaoResponseSerializer, 400: 'Erro de validação', 403: 'Permissão negada'},
+        operation_summary='Criar inscrição em torneio',
         operation_description="""
         Cria uma nova inscrição em um torneio.
         
@@ -875,17 +870,16 @@ class InscricaoViewSet(viewsets.ModelViewSet):
         - Torneio deve existir e estar com status 'Aberto'
         - Jogador não pode estar já inscrito no torneio
         - Usuário especificado deve ser do tipo 'JOGADOR'
-        """
+        """,
     )
     def create(self, request, *args, **kwargs):
         """
         Cria uma nova inscrição e retorna resposta padronizada.
         """
         response = super().create(request, *args, **kwargs)
-        return Response({
-            'message': 'Inscrição realizada com sucesso',
-            'inscricao': response.data
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {'message': 'Inscrição realizada com sucesso', 'inscricao': response.data}, status=status.HTTP_201_CREATED
+        )
 
     # Removidas implementações de put e delete pois a validação de rodada ativa
     # já está implementada no serializer InscricaoSerializer
@@ -897,41 +891,33 @@ class InscricaoViewSet(viewsets.ModelViewSet):
         Altera o status para 'Cancelado' mantendo histórico e pontuação.
         """
         inscricao = self.get_object()
-        
+
         # Verificar se a inscrição já está cancelada
         if inscricao.status == 'Cancelado':
-            return Response(
-                {"detail": "Esta inscrição já foi cancelada."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-                    
+            return Response({'detail': 'Esta inscrição já foi cancelada.'}, status=status.HTTP_400_BAD_REQUEST)
+
         # Bloqueia desinscrição apenas de torneios finalizados
         if inscricao.id_torneio.status == 'Finalizado':
             return Response(
-                {"detail": "Não é possível desinscrever-se de um torneio finalizado."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': 'Não é possível desinscrever-se de um torneio finalizado.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Verifica se há rodada ativa (não bloqueia, apenas avisa)
-        rodada_ativa = Rodada.objects.filter(
-            id_torneio=inscricao.id_torneio,
-            status='Em Andamento'
-        ).exists()
-        
+        rodada_ativa = Rodada.objects.filter(id_torneio=inscricao.id_torneio, status='Em Andamento').exists()
+
         # Soft delete: marca como cancelado
         inscricao.status = 'Cancelado'
         inscricao.data_saida = timezone.now()
         inscricao.save(update_fields=['status', 'data_saida'])
-        
-        message = "Desinscrição realizada com sucesso."
-        if rodada_ativa:
-            message += " Sua pontuação até o momento foi mantida no histórico do torneio."
-        
-        return Response({
-            "message": message,
-            "inscricao": InscricaoSerializer(inscricao).data
-        }, status=status.HTTP_200_OK)
 
+        message = 'Desinscrição realizada com sucesso.'
+        if rodada_ativa:
+            message += ' Sua pontuação até o momento foi mantida no histórico do torneio.'
+
+        return Response(
+            {'message': message, 'inscricao': InscricaoSerializer(inscricao).data}, status=status.HTTP_200_OK
+        )
 
     @action(detail=True, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def reativar(self, request, pk=None):
@@ -942,16 +928,13 @@ class InscricaoViewSet(viewsets.ModelViewSet):
 
         # se já está ativo
         if inscricao.status == 'Inscrito':
-            return Response(
-                {"detail": "Esta inscrição já está ativa."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'detail': 'Esta inscrição já está ativa.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # bloqueia reativação se o torneio estiver finalizado
         if inscricao.id_torneio.status == 'Finalizado':
             return Response(
-                {"detail": "Não é possível reativar inscrições de jogadores em torneios finalizados."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': 'Não é possível reativar inscrições de jogadores em torneios finalizados.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # atualiza a inscrição
@@ -959,11 +942,10 @@ class InscricaoViewSet(viewsets.ModelViewSet):
         inscricao.data_saida = None  # limpa p data de saída no soft delete
         inscricao.save(update_fields=['status', 'data_saida'])
 
-        return Response({
-            "message": "Inscrição reativada com sucesso.",
-            "inscricao": InscricaoSerializer(inscricao).data
-        }, status=status.HTTP_200_OK)
-
+        return Response(
+            {'message': 'Inscrição reativada com sucesso.', 'inscricao': InscricaoSerializer(inscricao).data},
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=False, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def inscrever_por_email(self, request):
@@ -974,46 +956,36 @@ class InscricaoViewSet(viewsets.ModelViewSet):
         email = request.data.get('email')
 
         if not torneio_id or not email:
-            return Response(
-                {"detail": "torneio_id e email são obrigatórios"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'detail': 'torneio_id e email são obrigatórios'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             torneio = Torneio.objects.get(id=torneio_id)
         except Torneio.DoesNotExist:
-            return Response(
-                {"detail": "Torneio não encontrado"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'detail': 'Torneio não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
         # Verificar se o torneio pertence à loja (ou se é admin)
         if request.user.tipo != 'ADMIN' and torneio.id_loja != request.user:
-            return Response(
-                {"detail": "Acesso negado a este torneio"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({'detail': 'Acesso negado a este torneio'}, status=status.HTTP_403_FORBIDDEN)
 
         # Validar status do torneio
         if torneio.status != 'Aberto':
             return Response(
-                {"detail": "Só é possível inscrever jogadores em torneios com status 'Aberto'"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': "Só é possível inscrever jogadores em torneios com status 'Aberto'"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             usuario = Usuario.objects.get(email=email, tipo='JOGADOR')
         except Usuario.DoesNotExist:
             return Response(
-                {"detail": f"Nenhum jogador encontrado com o email {email}"},
-                status=status.HTTP_404_NOT_FOUND
+                {'detail': f'Nenhum jogador encontrado com o email {email}'}, status=status.HTTP_404_NOT_FOUND
             )
 
         # Verificar se o jogador já está inscrito
         if Inscricao.objects.filter(id_usuario=usuario, id_torneio=torneio).exists():
             return Response(
-                {"detail": f"O jogador {usuario.username} já está inscrito neste torneio"},
-                status=status.HTTP_400_BAD_REQUEST
+                {'detail': f'O jogador {usuario.username} já está inscrito neste torneio'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Verificar limite de vagas se aplicável
@@ -1022,28 +994,24 @@ class InscricaoViewSet(viewsets.ModelViewSet):
 
             if inscritos_ativos >= torneio.qnt_vagas:
                 return Response(
-                    {"detail": "Limite de vagas atingido para este torneio"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {'detail': 'Limite de vagas atingido para este torneio'}, status=status.HTTP_400_BAD_REQUEST
                 )
 
         # Criar inscrição
-        inscricao = Inscricao.objects.create(
-            id_usuario=usuario,
-            id_torneio=torneio,
-            status='Inscrito'
-        )
+        inscricao = Inscricao.objects.create(id_usuario=usuario, id_torneio=torneio, status='Inscrito')
 
         serializer = InscricaoSerializer(inscricao)
-        return Response({
-            'message': f'Jogador {usuario.username} inscrito com sucesso no torneio',
-            'inscricao': serializer.data
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {'message': f'Jogador {usuario.username} inscrito com sucesso no torneio', 'inscricao': serializer.data},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class RodadaViewSet(viewsets.ModelViewSet):
     """
     Endpoint para visualizar e gerenciar as rodadas de um torneio.
     """
+
     queryset = Rodada.objects.all()
     serializer_class = RodadaSerializer
     permission_classes = [IsLojaOuAdmin | IsApenasLeitura, IsDonoDoTorneioOuAdmin]
@@ -1054,7 +1022,7 @@ class RodadaViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         method='post',
-        operation_summary="Alterar jogador em mesa (emparelhamento rápido)",
+        operation_summary='Alterar jogador em mesa (emparelhamento rápido)',
         operation_description="""Permite alterar jogadores diretamente em uma mesa durante fase de emparelhamento.
 
         **Parâmetros:**
@@ -1071,26 +1039,19 @@ class RodadaViewSet(viewsets.ModelViewSet):
             required=['mesa_id', 'time'],
             properties={
                 'jogador_id': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID do jogador a colocar (0 para remover)',
-                    default=0
+                    type=openapi.TYPE_INTEGER, description='ID do jogador a colocar (0 para remover)', default=0
                 ),
-                'mesa_id': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='ID da mesa onde alterar jogador'
-                ),
+                'mesa_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID da mesa onde alterar jogador'),
                 'time': openapi.Schema(
-                    type=openapi.TYPE_INTEGER,
-                    description='Time onde colocar o jogador (1 ou 2)',
-                    enum=[1, 2]
+                    type=openapi.TYPE_INTEGER, description='Time onde colocar o jogador (1 ou 2)', enum=[1, 2]
                 ),
-            }
+            },
         ),
         responses={
-            200: openapi.Response(description="Alteração realizada com sucesso"),
+            200: openapi.Response(description='Alteração realizada com sucesso'),
             400: 'Erro de validação',
-            403: 'Acesso negado'
-        }
+            403: 'Acesso negado',
+        },
     )
     @action(detail=False, methods=['post'], permission_classes=[IsLojaOuAdmin])
     def alterar_jogador_mesa(self, request):
@@ -1102,94 +1063,88 @@ class RodadaViewSet(viewsets.ModelViewSet):
 
         # Validações básicas
         if not mesa_id or time not in [1, 2] or position not in [1, 2]:
-            return Response({
-                "detail": "mesa_id, time (1 ou 2) e position (1 ou 2) são obrigatórios"
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'mesa_id, time (1 ou 2) e position (1 ou 2) são obrigatórios'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             mesa = Mesa.objects.get(id=mesa_id)
             rodada = mesa.id_rodada
         except Mesa.DoesNotExist:
-            return Response({"detail": "Mesa não encontrada"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Mesa não encontrada'}, status=status.HTTP_404_NOT_FOUND)
 
         # Verifica se rodada permite edição
         if rodada.status != 'Emparelhamento':
-            return Response({
-                "detail": "Rodada deve estar em fase de emparelhamento para editar jogadores."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Rodada deve estar em fase de emparelhamento para editar jogadores.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Verifica permissões
         if self.request.user.tipo != 'ADMIN' and rodada.id_torneio.id_loja != self.request.user:
-            return Response({"detail": "Acesso negado a este torneio"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'detail': 'Acesso negado a este torneio'}, status=status.HTTP_403_FORBIDDEN)
 
         with transaction.atomic():
             if jogador_id == 0:
                 # Remover jogador da posição específica do time nesta mesa
-                jogadores_time = MesaJogador.objects.filter(
-                    id_mesa=mesa,
-                    time=time
-                ).order_by('id')  # Ordena por ID para ter order consistente
+                jogadores_time = MesaJogador.objects.filter(id_mesa=mesa, time=time).order_by(
+                    'id'
+                )  # Ordena por ID para ter order consistente
 
                 if position <= len(jogadores_time):
                     jogador_para_remover = jogadores_time[position - 1]  # position 1 = primeiro, 2 = segundo
                     jogador_para_remover.delete()
 
-                return Response({
-                    "message": f"Jogador removido da posição {position} do Time {time}"
-                }, status=status.HTTP_200_OK)
+                return Response(
+                    {'message': f'Jogador removido da posição {position} do Time {time}'}, status=status.HTTP_200_OK
+                )
 
             else:
                 # Verificar se jogador existe
                 try:
                     usuario = Usuario.objects.get(id=jogador_id)
                 except Usuario.DoesNotExist:
-                    return Response({"detail": "Jogador não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({'detail': 'Jogador não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
                 # Verificar se jogador já está inscrito no torneio
                 if not Inscricao.objects.filter(
-                    id_torneio=rodada.id_torneio,
-                    id_usuario=jogador_id,
-                    status='Inscrito'
+                    id_torneio=rodada.id_torneio, id_usuario=jogador_id, status='Inscrito'
                 ).exists():
-                    return Response({"detail": "Jogador não inscrito neste torneio"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'detail': 'Jogador não inscrito neste torneio'}, status=status.HTTP_400_BAD_REQUEST
+                    )
 
                 # 🔍 PASSO 1: Verificar se o jogador já está exatamente onde queremos (mesmo mesa, time, posição)
-                jogadores_time = MesaJogador.objects.filter(
-                    id_mesa=mesa,
-                    time=time
-                ).order_by('id')
+                jogadores_time = MesaJogador.objects.filter(id_mesa=mesa, time=time).order_by('id')
 
                 if len(jogadores_time) >= position and jogadores_time[position - 1].id_usuario_id == jogador_id:
-                    return Response({
-                        "message": f"Jogador {usuario.username} já está na posição {position} do Time {time} da Mesa {mesa.numero_mesa}"
-                    }, status=status.HTTP_200_OK)
+                    return Response(
+                        {
+                            'message': f'Jogador {usuario.username} já está na posição {position} do Time {time} da Mesa {mesa.numero_mesa}'
+                        },
+                        status=status.HTTP_200_OK,
+                    )
 
                 # 🗑️ PASSO 2: Remover jogador de QUALQUER lugar nesta rodada (outra mesa ou mesma mesa/outro time)
-                MesaJogador.objects.filter(
-                    id_mesa__id_rodada=rodada,
-                    id_usuario=jogador_id
-                ).delete()
+                MesaJogador.objects.filter(id_mesa__id_rodada=rodada, id_usuario=jogador_id).delete()
 
                 # 🗑️ PASSO 3: Refazer query e remover qualquer jogador que já esteja na posição desejada nesta mesa/time
-                jogadores_time = MesaJogador.objects.filter(
-                    id_mesa=mesa,
-                    time=time
-                ).order_by('id')
+                jogadores_time = MesaJogador.objects.filter(id_mesa=mesa, time=time).order_by('id')
 
                 if len(jogadores_time) >= position:
                     jogador_na_posicao = jogadores_time[position - 1]
                     jogador_na_posicao.delete()
 
                 # ➕ PASSO 4: Agora SIM criar o novo registro
-                MesaJogador.objects.create(
-                    id_mesa=mesa,
-                    id_usuario_id=jogador_id,
-                    time=time
-                )
+                MesaJogador.objects.create(id_mesa=mesa, id_usuario_id=jogador_id, time=time)
 
-                return Response({
-                    "message": f"Jogador {usuario.username} posicionado na posição {position} do Time {time} da Mesa {mesa.numero_mesa}"
-                }, status=status.HTTP_200_OK)
+                return Response(
+                    {
+                        'message': f'Jogador {usuario.username} posicionado na posição {position} do Time {time} da Mesa {mesa.numero_mesa}'
+                    },
+                    status=status.HTTP_200_OK,
+                )
 
     @action(detail=True, methods=['get'])
     def mesas(self, request, pk=None):
@@ -1200,7 +1155,7 @@ class RodadaViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @swagger_auto_schema(
-        operation_summary="Listar sobressalentes da rodada",
+        operation_summary='Listar sobressalentes da rodada',
         operation_description="""
         Retorna a lista de jogadores que foram sobressalentes nesta rodada específica.
 
@@ -1229,22 +1184,22 @@ class RodadaViewSet(viewsets.ModelViewSet):
         """,
         responses={
             200: openapi.Response(
-                description="Lista de sobressalentes",
+                description='Lista de sobressalentes',
                 schema=openapi.Schema(
                     type=openapi.TYPE_ARRAY,
                     items=openapi.Schema(
                         type=openapi.TYPE_OBJECT,
                         properties={
-                            'id': openapi.Schema(type=openapi.TYPE_INTEGER, description="ID do usuário"),
-                            'username': openapi.Schema(type=openapi.TYPE_STRING, description="Nome de usuário"),
-                            'email': openapi.Schema(type=openapi.TYPE_STRING, description="Email do usuário"),
-                        }
-                    )
-                )
+                            'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID do usuário'),
+                            'username': openapi.Schema(type=openapi.TYPE_STRING, description='Nome de usuário'),
+                            'email': openapi.Schema(type=openapi.TYPE_STRING, description='Email do usuário'),
+                        },
+                    ),
+                ),
             ),
             404: 'Rodada não encontrada',
-            403: 'Acesso negado'
-        }
+            403: 'Acesso negado',
+        },
     )
     @action(detail=True, methods=['get'], permission_classes=[IsLojaOuAdmin | IsApenasLeitura])
     def sobressalentes(self, request, pk=None):
@@ -1259,9 +1214,7 @@ class RodadaViewSet(viewsets.ModelViewSet):
 
         # Busca todos os jogadores que ESTÃO em mesas desta rodada
         jogadores_em_mesas = set(
-            MesaJogador.objects.filter(
-                id_mesa__id_rodada=rodada
-            ).values_list('id_usuario_id', flat=True)
+            MesaJogador.objects.filter(id_mesa__id_rodada=rodada).values_list('id_usuario_id', flat=True)
         )
 
         # Jogadores sobressalentes = inscritos ativos - jogadores que estão em mesas
@@ -1270,24 +1223,20 @@ class RodadaViewSet(viewsets.ModelViewSet):
         # Busca dados dos usuários sobressalentes
         if jogadores_sobressalentes_ids:
             from usuarios.models import Usuario
-            jogadores_sobressalentes = Usuario.objects.filter(
-                id__in=jogadores_sobressalentes_ids
-            ).values('id', 'username', 'email')
+
+            jogadores_sobressalentes = Usuario.objects.filter(id__in=jogadores_sobressalentes_ids).values(
+                'id', 'username', 'email'
+            )
         else:
             jogadores_sobressalentes = []
 
         return Response(list(jogadores_sobressalentes), status=200)
 
-
     @swagger_auto_schema(
         method='get',
-        responses={
-            200: RodadaEmparelhamentoSerializer,
-            403: 'Acesso negado',
-            404: 'Rodada não encontrada'
-        },
-        operation_summary="Obter dados de emparelhamento da rodada",
-        operation_description="""Retorna informações sobre jogadores disponíveis e mesas já criadas para emparelhamento."""
+        responses={200: RodadaEmparelhamentoSerializer, 403: 'Acesso negado', 404: 'Rodada não encontrada'},
+        operation_summary='Obter dados de emparelhamento da rodada',
+        operation_description="""Retorna informações sobre jogadores disponíveis e mesas já criadas para emparelhamento.""",
     )
     @action(detail=True, methods=['get'], permission_classes=[IsLojaOuAdmin])
     def emparelhamento(self, request, pk=None):
@@ -1296,22 +1245,18 @@ class RodadaViewSet(viewsets.ModelViewSet):
         verificar_dono_do_torneio(request.user, rodada.id_torneio)
 
         # Jogadores ainda não emparelhados
-        jogadores_inscritos = Inscricao.objects.filter(
-            id_torneio=rodada.id_torneio,
-            status='Inscrito'
-        ).values_list('id_usuario', flat=True)
+        jogadores_inscritos = Inscricao.objects.filter(id_torneio=rodada.id_torneio, status='Inscrito').values_list(
+            'id_usuario', flat=True
+        )
 
-        jogadores_em_mesas = MesaJogador.objects.filter(
-            id_mesa__id_rodada=rodada
-        ).values_list('id_usuario', flat=True)
+        jogadores_em_mesas = MesaJogador.objects.filter(id_mesa__id_rodada=rodada).values_list('id_usuario', flat=True)
 
         jogadores_disponiveis = jogadores_inscritos.exclude(id__in=jogadores_em_mesas)
 
         # Dados dos jogadores disponíveis
         from usuarios.models import Usuario
-        jogadores_disp_list = Usuario.objects.filter(
-            id__in=jogadores_disponiveis
-        ).values('id', 'username')
+
+        jogadores_disp_list = Usuario.objects.filter(id__in=jogadores_disponiveis).values('id', 'username')
 
         # Mesas já criadas
         mesas = Mesa.objects.filter(id_rodada=rodada).prefetch_related('jogadores_na_mesa__id_usuario')
@@ -1320,33 +1265,28 @@ class RodadaViewSet(viewsets.ModelViewSet):
         for mesa in mesas:
             jogadores_mesa = []
             for mj in mesa.jogadores_na_mesa.all():
-                jogadores_mesa.append({
-                    'id': mj.id_usuario.id,
-                    'username': mj.id_usuario.username,
-                    'time': mj.time
-                })
-            mesas_list.append({
-                'id': mesa.id,
-                'numero_mesa': mesa.numero_mesa,
-                'jogadores': jogadores_mesa
-            })
+                jogadores_mesa.append({'id': mj.id_usuario.id, 'username': mj.id_usuario.username, 'time': mj.time})
+            mesas_list.append({'id': mesa.id, 'numero_mesa': mesa.numero_mesa, 'jogadores': jogadores_mesa})
 
-        return Response({
-            'jogadores_disponiveis': list(jogadores_disp_list),
-            'mesas_criadas': mesas_list,
-            'status_emparelhamento': rodada.status
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'jogadores_disponiveis': list(jogadores_disp_list),
+                'mesas_criadas': mesas_list,
+                'status_emparelhamento': rodada.status,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         request_body=EmparelhamentoAutomaticoSerializer,
         responses={
-            200: openapi.Response(description="Emparelhamento realizado com sucesso"),
+            200: openapi.Response(description='Emparelhamento realizado com sucesso'),
             400: 'Erro de validação',
-            403: 'Acesso negado'
+            403: 'Acesso negado',
         },
-        operation_summary="Emparelhar jogadores automaticamente",
-        operation_description="""Realiza emparelhamento automático dos jogadores usando sistema Random ou Swiss."""
+        operation_summary='Emparelhar jogadores automaticamente',
+        operation_description="""Realiza emparelhamento automático dos jogadores usando sistema Random ou Swiss.""",
     )
     @action(detail=True, methods=['post'], permission_classes=PERMISSOES_GESTAO)
     def emparelhar_automatico(self, request, pk=None):
@@ -1356,11 +1296,11 @@ class RodadaViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         if rodada.status != 'Emparelhamento':
-            return Response({"detail": "Rodada não está em fase de emparelhamento"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Rodada não está em fase de emparelhamento'}, status=status.HTTP_400_BAD_REQUEST)
 
         jogadores = jogadores_ativos_ids(rodada.id_torneio)
         if len(jogadores) < 4:
-            return Response({"detail": "São necessários pelo menos 4 jogadores"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'São necessários pelo menos 4 jogadores'}, status=status.HTTP_400_BAD_REQUEST)
 
         tipo = serializer.validated_data['tipo']
 
@@ -1371,21 +1311,24 @@ class RodadaViewSet(viewsets.ModelViewSet):
             else:  # swiss
                 mesas_criadas = emparelhar_swiss(rodada, rodada.id_torneio)
 
-        return Response({
-            'message': f'Emparelhamento automático ({tipo}) realizado',
-            'mesas_criadas': mesas_criadas,
-            'total_jogadores': len(jogadores)
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': f'Emparelhamento automático ({tipo}) realizado',
+                'mesas_criadas': mesas_criadas,
+                'total_jogadores': len(jogadores),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         responses={
-            200: openapi.Response(description="Emparelhamento resetado com sucesso"),
+            200: openapi.Response(description='Emparelhamento resetado com sucesso'),
             400: 'Erro de validação',
-            403: 'Acesso negado'
+            403: 'Acesso negado',
         },
-        operation_summary="Re-emparelhar rodada",
-        operation_description="""Descarta o emparelhamento atual e executa um novo emparelhamento Swiss."""
+        operation_summary='Re-emparelhar rodada',
+        operation_description="""Descarta o emparelhamento atual e executa um novo emparelhamento Swiss.""",
     )
     @action(detail=True, methods=['post'], permission_classes=PERMISSOES_GESTAO)
     def reemparelhar(self, request, pk=None):
@@ -1394,30 +1337,33 @@ class RodadaViewSet(viewsets.ModelViewSet):
 
         # Só permite re-emparelhar se rodada estiver em fase de emparelhamento
         if rodada.status != 'Emparelhamento':
-            return Response({
-                "detail": "Rodada deve estar em fase de emparelhamento."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Rodada deve estar em fase de emparelhamento.'}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         with transaction.atomic():
             limpar_mesas(rodada)
             mesas_criadas_count = emparelhar_swiss(rodada, rodada.id_torneio)
 
-        return Response({
-            'message': f'Emparelhamento resetado e re-executado automaticamente. {mesas_criadas_count} mesa(s) criada(s).',
-            'rodada_id': rodada.id,
-            'mesas_criadas': mesas_criadas_count
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': f'Emparelhamento resetado e re-executado automaticamente. {mesas_criadas_count} mesa(s) criada(s).',
+                'rodada_id': rodada.id,
+                'mesas_criadas': mesas_criadas_count,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @swagger_auto_schema(
         method='post',
         request_body=EditarEmparelhamentoSerializer,
         responses={
-            200: openapi.Response(description="Edição realizada com sucesso"),
+            200: openapi.Response(description='Edição realizada com sucesso'),
             400: 'Erro de validação',
-            403: 'Acesso negado'
+            403: 'Acesso negado',
         },
-        operation_summary="Editar emparelhamento manualmente",
-        operation_description="""Permite mover jogadores entre mesas ou alterar times dentro de mesas."""
+        operation_summary='Editar emparelhamento manualmente',
+        operation_description="""Permite mover jogadores entre mesas ou alterar times dentro de mesas.""",
     )
     @action(detail=True, methods=['post'], permission_classes=PERMISSOES_GESTAO)
     def editar_emparelhamento(self, request, pk=None):
@@ -1427,9 +1373,10 @@ class RodadaViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         if rodada.status != 'Emparelhamento':
-            return Response({
-                "detail": "Somente é possível editar emparelhamento durante fase de emparelhamento."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Somente é possível editar emparelhamento durante fase de emparelhamento.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         acao = serializer.validated_data['acao']
         jogador_id = serializer.validated_data['jogador_id']
@@ -1439,28 +1386,29 @@ class RodadaViewSet(viewsets.ModelViewSet):
                 nova_mesa_id = serializer.validated_data['nova_mesa_id']
                 sucesso = self._mover_jogador_para_mesa(rodada, jogador_id, nova_mesa_id)
                 if not sucesso:
-                    return Response({"detail": "Não foi possível mover jogador."}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'detail': 'Não foi possível mover jogador.'}, status=status.HTTP_400_BAD_REQUEST)
             elif acao == 'alterar_time_jogador':
                 novo_time = serializer.validated_data['novo_time']
                 sucesso = self._alterar_time_jogador(rodada, jogador_id, novo_time)
                 if not sucesso:
-                    return Response({"detail": "Não foi possível alterar time do jogador."}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'detail': 'Não foi possível alterar time do jogador.'}, status=status.HTTP_400_BAD_REQUEST
+                    )
 
-        return Response({
-            'message': f'Ação {acao} realizada com sucesso',
-            'jogador_id': jogador_id
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {'message': f'Ação {acao} realizada com sucesso', 'jogador_id': jogador_id}, status=status.HTTP_200_OK
+        )
 
     @swagger_auto_schema(
         method='post',
         request_body=IniciarRodadaSerializer,
         responses={
-            200: openapi.Response(description="Rodada iniciada com sucesso"),
+            200: openapi.Response(description='Rodada iniciada com sucesso'),
             400: 'Erro de validação',
-            403: 'Acesso negado'
+            403: 'Acesso negado',
         },
-        operation_summary="Iniciar rodada emparelhada",
-        operation_description="""Conclui fase de emparelhamento e inicia a rodada para jogos."""
+        operation_summary='Iniciar rodada emparelhada',
+        operation_description="""Conclui fase de emparelhamento e inicia a rodada para jogos.""",
     )
     @action(detail=True, methods=['post'], permission_classes=PERMISSOES_GESTAO)
     def iniciar_rodada(self, request, pk=None):
@@ -1470,7 +1418,10 @@ class RodadaViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         if rodada.status != 'Emparelhamento':
-            return Response({"detail": "Emparelhamento deve estar concluído antes de iniciar a rodada"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Emparelhamento deve estar concluído antes de iniciar a rodada'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         mesas = Mesa.objects.filter(id_rodada=rodada)
         forcar = serializer.validated_data.get('forcar_inicio', False)
@@ -1480,19 +1431,25 @@ class RodadaViewSet(viewsets.ModelViewSet):
             for mesa in mesas:
                 count_jogadores = MesaJogador.objects.filter(id_mesa=mesa).count()
                 if count_jogadores != 4:
-                    return Response({
-                        "detail": f"Mesa {mesa.numero_mesa} tem {count_jogadores} jogadores. Use forcar_inicio=true ou ajuste emparelhamento."
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {
+                            'detail': f'Mesa {mesa.numero_mesa} tem {count_jogadores} jogadores. Use forcar_inicio=true ou ajuste emparelhamento.'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
         # Muda o status para "Em Andamento" para permitir que jogadores reportem resultados
         rodada.status = 'Em Andamento'
         rodada.data_inicio = timezone.now()
         rodada.save(update_fields=['status', 'data_inicio'])
 
-        return Response({
-            'message': 'Rodada iniciada com sucesso. Jogadores podem agora reportar resultados das mesas.',
-            'mesas_criadas': mesas.count()
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': 'Rodada iniciada com sucesso. Jogadores podem agora reportar resultados das mesas.',
+                'mesas_criadas': mesas.count(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def _mover_jogador_para_mesa(self, rodada, jogador_id, mesa_id):
         """Move um jogador inscrito para uma mesa desta rodada (entra no Time 1 por padrão)."""
@@ -1502,24 +1459,14 @@ class RodadaViewSet(viewsets.ModelViewSet):
             return False
 
         # Remove de mesa atual se estiver em uma
-        MesaJogador.objects.filter(
-            id_mesa__id_rodada=rodada,
-            id_usuario_id=jogador_id
-        ).delete()
+        MesaJogador.objects.filter(id_mesa__id_rodada=rodada, id_usuario_id=jogador_id).delete()
 
-        MesaJogador.objects.create(
-            id_mesa_id=mesa_id,
-            id_usuario_id=jogador_id,
-            time=1
-        )
+        MesaJogador.objects.create(id_mesa_id=mesa_id, id_usuario_id=jogador_id, time=1)
         return True
 
     def _alterar_time_jogador(self, rodada, jogador_id, novo_time):
         """Altera time do jogador"""
-        count = MesaJogador.objects.filter(
-            id_mesa__id_rodada=rodada,
-            id_usuario_id=jogador_id
-        ).update(time=novo_time)
+        count = MesaJogador.objects.filter(id_mesa__id_rodada=rodada, id_usuario_id=jogador_id).update(time=novo_time)
 
         return count > 0
 
@@ -1541,6 +1488,7 @@ class MesaViewSet(viewsets.ModelViewSet):
     Endpoint para visualizar e gerenciar as mesas de uma rodada.
     Lista mesas filtradas por rodada_id com detalhes completos incluindo jogadores.
     """
+
     queryset = Mesa.objects.all()
     serializer_class = MesaSerializer
     permission_classes = [IsLojaOuAdmin | IsApenasLeitura, IsDonoDoTorneioOuAdmin]
@@ -1557,10 +1505,11 @@ class MesaViewSet(viewsets.ModelViewSet):
         rodada_id = self.request.query_params.get('rodada_id')
 
         if rodada_id:
-            queryset = queryset.filter(id_rodada_id=rodada_id).prefetch_related(
-                'jogadores_na_mesa',
-                'jogadores_na_mesa__id_usuario'
-            ).order_by('numero_mesa')
+            queryset = (
+                queryset.filter(id_rodada_id=rodada_id)
+                .prefetch_related('jogadores_na_mesa', 'jogadores_na_mesa__id_usuario')
+                .order_by('numero_mesa')
+            )
 
         return queryset
 
@@ -1571,32 +1520,31 @@ class MesaViewSet(viewsets.ModelViewSet):
         return MesaSerializer
 
     @swagger_auto_schema(
-        method="post",
+        method='post',
         request_body=ReportarResultadoSerializer,
         responses={
-            200: openapi.Response("Resultado registrado com sucesso", schema=MesaDetailSerializer),
-            400: "Erro de validação (placar, composição 2v2, payload)",
+            200: openapi.Response('Resultado registrado com sucesso', schema=MesaDetailSerializer),
+            400: 'Erro de validação (placar, composição 2v2, payload)',
             403: "A rodada não está 'Em Andamento' ou permissão negada",
-            404: "Mesa não encontrada"
+            404: 'Mesa não encontrada',
         },
-        operation_summary="Reportar resultado da mesa (RF-012)",
+        operation_summary='Reportar resultado da mesa (RF-012)',
         operation_description=(
-                "Permite que o jogador da mesa reporte/edite o resultado da partida.\n\n"
-                "Regras:\n"
-                "- Rodada deve estar 'Em Andamento'.\n"
-                "- Mesa deve estar completa no formato 2v2 (02 jogadores no Time 1 e 02 no Time 2).\n"
-                "- Valida coerência entre pontuações e `time_vencedor`.\n\n"
-                "Campos:\n"
-                "- `pontuacao_time_1` (int ≥ 0)\n"
-                "- `pontuacao_time_2` (int ≥ 0)\n"
-                "- `time_vencedor` (0=Empate, 1=Time 1, 2=Time 2)"
+            'Permite que o jogador da mesa reporte/edite o resultado da partida.\n\n'
+            'Regras:\n'
+            "- Rodada deve estar 'Em Andamento'.\n"
+            '- Mesa deve estar completa no formato 2v2 (02 jogadores no Time 1 e 02 no Time 2).\n'
+            '- Valida coerência entre pontuações e `time_vencedor`.\n\n'
+            'Campos:\n'
+            '- `pontuacao_time_1` (int ≥ 0)\n'
+            '- `pontuacao_time_2` (int ≥ 0)\n'
+            '- `time_vencedor` (0=Empate, 1=Time 1, 2=Time 2)'
         ),
     )
-
     @action(detail=True, methods=['post'], permission_classes=[IsJogadorNaMesa])
     def reportar_resultado(self, request, pk=None):
         # Aqui é um bloqueio transacional > evitar processamento de dois reports simultâneos
-        with (transaction.atomic()):
+        with transaction.atomic():
             # lock pessimista na mesa
             # É um bloqueio exclusivo de linha feito pelo banco quando usamos select_for_update().
             # Enquanto uma transação está rodando (no bloco with transaction.atomic():),
@@ -1610,16 +1558,20 @@ class MesaViewSet(viewsets.ModelViewSet):
             # é necessário que Rodada precisa estar 'Em Andamento'
             if getattr(mesa.id_rodada, 'status', None) != 'Em Andamento':
                 return Response(
-                    {"detail": "Não é possível reportar resultado: a rodada não está 'Em Andamento'."},
-                    status=status.HTTP_403_FORBIDDEN
+                    {'detail': "Não é possível reportar resultado: a rodada não está 'Em Andamento'."},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
             # Mesa precisa estar completa: 2v2
             jogadores = list(MesaJogador.objects.filter(id_mesa=mesa).only('time'))
-            if len(jogadores) != 4 or sum(j.time == 1 for j in jogadores) != 2 or sum(j.time == 2 for j in jogadores) != 2:
+            if (
+                len(jogadores) != 4
+                or sum(j.time == 1 for j in jogadores) != 2
+                or sum(j.time == 2 for j in jogadores) != 2
+            ):
                 return Response(
-                    {"detail": "Mesa inválida: é necessário haver 2 jogadores no Time 1 e 2 no Time 2 (2x2)."},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {'detail': 'Mesa inválida: é necessário haver 2 jogadores no Time 1 e 2 no Time 2 (2x2).'},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             # validacao de payload
@@ -1629,14 +1581,14 @@ class MesaViewSet(viewsets.ModelViewSet):
             # aplicacao de resultado
             mesa.pontuacao_time_1 = serializer.validated_data['pontuacao_time_1']
             mesa.pontuacao_time_2 = serializer.validated_data['pontuacao_time_2']
-            mesa.time_vencedor    = serializer.validated_data['time_vencedor']
+            mesa.time_vencedor = serializer.validated_data['time_vencedor']
             mesa.save(update_fields=['pontuacao_time_1', 'pontuacao_time_2', 'time_vencedor'])
 
         # resposta
-        return Response({
-            'message': 'Resultado reportado com sucesso',
-            'mesa': MesaDetailSerializer(mesa).data
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {'message': 'Resultado reportado com sucesso', 'mesa': MesaDetailSerializer(mesa).data},
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=['patch'], permission_classes=PERMISSOES_GESTAO)
     def editar_manual(self, request, pk=None):
@@ -1649,10 +1601,10 @@ class MesaViewSet(viewsets.ModelViewSet):
             mesa.pontuacao_time_2 = serializer.validated_data['pontuacao_time_2']
             mesa.time_vencedor = serializer.validated_data['time_vencedor']
             mesa.save(update_fields=['pontuacao_time_1', 'pontuacao_time_2', 'time_vencedor'])
-            return Response({
-                'message': 'Mesa editada manualmente com sucesso',
-                'mesa': MesaDetailSerializer(mesa).data
-            }, status=status.HTTP_200_OK)
+            return Response(
+                {'message': 'Mesa editada manualmente com sucesso', 'mesa': MesaDetailSerializer(mesa).data},
+                status=status.HTTP_200_OK,
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1669,20 +1621,17 @@ class MesaViewSet(viewsets.ModelViewSet):
             # Adiciona novos jogadores
             for jogador_data in serializer.validated_data['jogadores']:
                 MesaJogador.objects.create(
-                    id_mesa=mesa,
-                    id_usuario_id=jogador_data['id_usuario'],
-                    time=jogador_data['time']
+                    id_mesa=mesa, id_usuario_id=jogador_data['id_usuario'], time=jogador_data['time']
                 )
 
-            return Response({
-                'message': 'Jogadores da mesa atualizados com sucesso',
-                'mesa': MesaDetailSerializer(mesa).data
-            }, status=status.HTTP_200_OK)
+            return Response(
+                {'message': 'Jogadores da mesa atualizados com sucesso', 'mesa': MesaDetailSerializer(mesa).data},
+                status=status.HTTP_200_OK,
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=['get'],
-            permission_classes=[permissions.IsAuthenticated])
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def minha_mesa_na_rodada(self, request):
         """
         Endpoint para o jogador visualizar a mesa em que está inserido
@@ -1691,24 +1640,19 @@ class MesaViewSet(viewsets.ModelViewSet):
         rodada_id = request.query_params.get('rodada_id')
 
         if not rodada_id:
-            return Response(
-                {"error": "Parâmetro 'rodada_id' é obrigatório"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': "Parâmetro 'rodada_id' é obrigatório"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Encontra a mesa da RODADA ESPECÍFICA onde o jogador está
         try:
             mesa_jogador = MesaJogador.objects.select_related(
-                'id_mesa__id_rodada__id_torneio',
-                'id_mesa__id_rodada'
+                'id_mesa__id_rodada__id_torneio', 'id_mesa__id_rodada'
             ).get(
                 id_usuario=request.user,
-                id_mesa__id_rodada_id=rodada_id  # Busca pela rodada específica
+                id_mesa__id_rodada_id=rodada_id,  # Busca pela rodada específica
             )
         except MesaJogador.DoesNotExist:
             return Response(
-                {"error": "Jogador não está em nenhuma mesa desta rodada"},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': 'Jogador não está em nenhuma mesa desta rodada'}, status=status.HTTP_404_NOT_FOUND
             )
 
         serializer = VisualizacaoMesaJogadorSerializer(mesa_jogador.id_mesa)

@@ -19,32 +19,24 @@ class Usuario(AbstractUser):
         ADMIN = 'ADMIN', 'Admin'
 
     tipo = models.CharField(
-        max_length=10,
-        choices=TipoUsuario.choices,
-
-        help_text="Define o nível de permissão do usuário na plataforma."
+        max_length=10, choices=TipoUsuario.choices, help_text='Define o nível de permissão do usuário na plataforma.'
     )
 
     status = models.CharField(
-        max_length=100,
-        default="ativo",
-        help_text="Status do usuário (ex: ativo, inativo, banido)."
+        max_length=100, default='ativo', help_text='Status do usuário (ex: ativo, inativo, banido).'
     )
 
     # Usar email como username
     email = models.EmailField(unique=True)
 
     token_redefinir_senha = models.CharField(
-        max_length=16,
-        blank=True,
-        null=True,
-        help_text="Token usado na redefinição de senha (16 dígitos aleatórios)."
+        max_length=16, blank=True, null=True, help_text='Token usado na redefinição de senha (16 dígitos aleatórios).'
     )
 
     token_redefinir_senha_criado_em = models.DateTimeField(
         blank=True,
         null=True,
-        help_text="Momento em que o token de redefinição foi gerado (usado para expirar o token)."
+        help_text='Momento em que o token de redefinição foi gerado (usado para expirar o token).',
     )
 
     # Definir o campo de username para email
