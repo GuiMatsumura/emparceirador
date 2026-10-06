@@ -178,20 +178,17 @@ Severidade: 🔴 alta · 🟠 média · 🟡 baixa. Cada item corrigido tem test
 - [ ] `views.py` (~1.700 linhas) e `infoTorneioLoja/index.tsx` (~2.160) — dividir.
 - [ ] Testes no frontend (não há framework configurado).
 - [ ] ESLint com 101 erros (maioria `no-explicit-any`).
-- [ ] Arquivos soltos/untracked: `torneios/banners/*.png` (sobra de quando banner era upload; hoje é `CharField`), `.md`s de documentação do backend e `DEPLOY_E_CUSTOS.md` na raiz — decidir se commita.
+- [x] ~~Arquivos soltos~~ → docs técnicos em `docs/`; artefatos acadêmicos e sobras removidos.
 - [x] ~~Lógica Swiss duplicada em 4 lugares~~ → `torneios/emparelhamento.py`. Helpers mortos removidos.
 - [x] ~~N+1 no fallback de `ranking_rodada`~~.
-- [ ] READMEs desatualizados (`codigo-fonte/backend/README.md` ainda descreve `DB_*` em vez de `DATABASE_URL`; `frontend/README.md` é o template do Vite).
+- [x] ~~READMEs desatualizados~~ → README único na raiz.
 
 ## 7. Documentos existentes úteis
 
 | Arquivo | Conteúdo |
 |---|---|
-| `documentos/02-Especificação do Projeto.md` | Requisitos RF-001..016 e RNF-001..015 |
-| `documentos/05-Implantação.md` | Render + Vercel/Netlify |
-| `codigo-fonte/backend/README.md` | Setup local do backend |
-| `codigo-fonte/backend/api/ALGORITMO_PAREAMENTO_2V2.md` | Especificação do desempate (1144 linhas) |
-| `codigo-fonte/backend/api/TRATAMENTO_BYE_DESEMPATE.md` | Regra do bye nos desempates |
-| `codigo-fonte/backend/api/GUIA_TESTES_BYE.md` | Cenários de teste manual do ranking |
-| `codigo-fonte/backend/api/SEED_DATABASE.md` | SQL para popular o banco (senhas são placeholders inválidos) |
-| `DEPLOY_E_CUSTOS.md` | Estudo de deploy e custos |
+| `README.md` | Setup local |
+| `docs/algoritmo-ranking-2v2.md` | Especificação do desempate |
+| `docs/bye-e-desempate.md` | Regra do bye nos desempates |
+| `docs/guia-testes-bye.md` | Cenários de teste manual do ranking |
+| `docs/deploy-e-custos.md` | Estudo de deploy e custos |

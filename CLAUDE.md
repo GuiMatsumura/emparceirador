@@ -1,7 +1,7 @@
 # Commander 150 — guia rápido do projeto
 
 Sistema web para gestão de torneios de **Magic: The Gathering no formato 2v2 com duplas aleatórias**
-(projeto de extensão PUC Minas, ADS 2025-2, Eixo 5). Toda a base (código, comentários, mensagens de
+(nasceu como projeto de extensão da PUC Minas; hoje vive no repo GuiMatsumura/emparceirador). Toda a base (código, comentários, mensagens de
 API, commits) é em **português** — mantenha esse padrão.
 
 Análise detalhada (endpoints, fluxos, máquina de estados, backlog de bugs): **[ANALISE_TECNICA.md](ANALISE_TECNICA.md)**.
@@ -9,8 +9,7 @@ Análise detalhada (endpoints, fluxos, máquina de estados, backlog de bugs): **
 ## Estrutura
 
 ```
-codigo-fonte/
-  backend/api/        Django 5.2 + DRF (Python 3.12 em prod; local tem 3.13)
+backend/              Django 5.2 + DRF (Python 3.12 em prod; local tem 3.13)
     core/             settings.py, urls.py, .env (gitignored)
     usuarios/         Usuario custom (email = login, campo tipo JOGADOR|LOJA|ADMIN), auth por sessão
     torneios/         Torneio, Inscricao, Rodada, Mesa, MesaJogador, RankingParcial
@@ -19,18 +18,18 @@ codigo-fonte/
       ranking_utils.py  cálculo de ranking/desempate (MW%, OMW%, PMW%, Balanço)
       permissoes.py   IsLojaOuAdmin, IsApenasLeitura, IsDonoDoTorneioOuAdmin, IsJogadorNaMesa...
       tests.py        testes de API (usuarios/tests.py idem)
-  frontend/           React 19 + TypeScript + Vite 7, react-router 7, axios, sweetalert2, CSS modules
+frontend/             React 19 + TypeScript + Vite 7, react-router 7, axios, sweetalert2, CSS modules
     src/services/     api.ts (axios withCredentials), authServico, torneioServico, mesaServico
     src/contextos/AuthContexto.tsx   useSessao() — estado global do usuário logado
     src/routes/       AppRoutes.tsx + RotaSegura.tsx (só checa login, não checa tipo)
     src/pages/Torneio/infoTorneioLoja/index.tsx  ~2160 linhas — painel da LOJA (gestão do torneio)
     src/pages/Mesa/   intervalo + mesa-ativa — visão do JOGADOR durante o torneio
-documentos/           documentação acadêmica (requisitos RF/RNF em 02-Especificação do Projeto.md)
+docs/                 documentação técnica (algoritmo de ranking, bye, deploy)
 ```
 
 ## Comandos
 
-Backend (em `codigo-fonte/backend/api`):
+Backend (em `backend/`):
 ```
 pip install -r requirements.txt
 python manage.py migrate
@@ -39,10 +38,10 @@ python manage.py test --settings=core.settings_test   # SQLite em memória, não
 python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
-`.env` em `core/` precisa de: `DEBUG, SECRET_KEY, DATABASE_URL (Postgres/Neon), EMAIL_USER, EMAIL_PASSWORD,
+`backend/core/.env` (modelo em `backend/.env.example`) precisa de: `DEBUG, SECRET_KEY, DATABASE_URL (Postgres/Neon), EMAIL_USER, EMAIL_PASSWORD,
 CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS, ALLOWED_HOSTS`. O banco vem de `DATABASE_URL` (as vars `DB_*` estão obsoletas).
 
-Frontend (em `codigo-fonte/frontend`):
+Frontend (em `frontend/`):
 ```
 npm install
 npm run dev        # http://localhost:5173 ; precisa de VITE_API_BASE_URL no .env (ex: http://localhost:8000/api/v1)
@@ -70,8 +69,8 @@ Deploy: backend no Render (gunicorn), banco Neon (Postgres), frontend na Vercel 
   Ganha `pontuacao_bye` nos pontos (só se já estava inscrito no início da rodada), mas byes são
   **excluídos** dos desempates (MW/OMW/PMW).
 - **Ranking**: pontos → Balanço (OMW% − PMW%) → OMW% → MW%. Calculado e gravado em `RankingParcial`
-  ao finalizar cada rodada (`proxima_rodada`/`finalizar`). Detalhes em `backend/api/ALGORITMO_PAREAMENTO_2V2.md`
-  e `TRATAMENTO_BYE_DESEMPATE.md`.
+  ao finalizar cada rodada (`proxima_rodada`/`finalizar`). Detalhes em `docs/algoritmo-ranking-2v2.md`
+  e `docs/bye-e-desempate.md`.
 - **Inscricao.status**: `Inscrito` | `Cancelado` (soft delete com `data_saida`). Torneio `Aberto` → o front
   faz hard DELETE; `Em Andamento` → `POST .../desinscrever/`.
 

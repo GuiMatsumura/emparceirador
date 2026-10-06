@@ -1,45 +1,80 @@
-# COMMANDER 150
+# Commander 150
 
-`ANÁLISE E DESENVOLVIMENTO DE SISTEMAS`
+Sistema web para organizar torneios de **Magic: The Gathering no formato 2v2 com duplas aleatórias** — modalidade
+cooperativa sem suporte oficial, normalmente organizada à mão pelas lojas.
 
-`Eixo 5 - Projeto: Desenvolvimento de um Sistema Sociotécnico Inovador - Turma 03`
+A aplicação cuida de inscrições, geração de rodadas e mesas, registro de resultados, pontuação e ranking com
+critérios de desempate próprios para duplas aleatórias.
 
-`2025-2`
+## Funcionalidades
 
-O projeto _Commander 150_ consiste no desenvolvimento de um sistema web voltado para a gestão de torneios de _Magic: The Gathering_ no formato 2v2, modalidade cooperativa que não possui suporte oficial e cuja organização costuma ser feita de forma manual ou semi-manual. A aplicação permitirá automatizar processos como inscrição e desinscrição de jogadores, geração de rodadas com regras específicas, registro e edição de resultados, cálculo de pontuações e critérios de desempate, além de exibir tabelas de classificação.
+- **Jogador:** cadastro/login, inscrição em torneios, visualização da mesa da rodada, report de resultado, ranking.
+- **Loja:** criação e edição de torneios (pontuação configurável), gestão de inscrições, emparelhamento automático
+  (aleatório na 1ª rodada, Swiss nas seguintes) com ajustes manuais, confirmação de resultados, finalização.
+- **Ranking:** pontos → Balanço (OMW% − PMW%) → OMW% → MW%. Detalhes em [docs/algoritmo-ranking-2v2.md](docs/algoritmo-ranking-2v2.md).
 
-A iniciativa busca oferecer uma solução tecnológica acessível tanto para organizadores quanto para jogadores, tornando os torneios mais organizados, transparentes e também inclusivos. Ao mesmo tempo, o projeto serve como oportunidade de aprendizado prático para estudantes de Análise e Desenvolvimento de Sistemas, que aplicam conhecimentos acadêmicos no atendimento a uma demanda da comunidade, unindo formação profissional com impacto social.
+## Stack
 
-## Integrantes
+| Camada | Tecnologias |
+|---|---|
+| Backend | Python 3.12, Django 5.2, Django REST Framework, PostgreSQL, drf-yasg (Swagger) |
+| Frontend | React 19, TypeScript, Vite, React Router, Axios, SweetAlert2 |
+| Autenticação | Sessão Django (cookie) |
 
-* Gabriela Franklin Sá de Moura
-* Guilherme Pena Matsumura
-* Lucas Campos de Abreu
-* Rafael Costa Souza
-* Willams Andrade Lima
+## Estrutura
 
-## Orientador
+```
+backend/            API Django
+  core/             settings, urls, wsgi
+  usuarios/         usuário customizado (login por e-mail), autenticação, redefinição de senha
+  torneios/         torneios, inscrições, rodadas, mesas, emparelhamento e ranking
+frontend/           SPA React + Vite
+  src/services/     cliente HTTP por domínio
+  src/pages/        telas
+  src/components/   componentes reutilizáveis
+docs/               documentação técnica (ranking, bye, deploy)
+```
 
-* Prof. José Wilson da Costa
+## Rodando localmente
 
-## Instruções de utilização
+### Backend
 
-Assim que a primeira versão do sistema estiver disponível, deverá complementar com as instruções de utilização. Descreva como instalar eventuais dependências e como executar a aplicação.
+Pré-requisitos: Python 3.12+ e PostgreSQL.
 
-# Documentação
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example core/.env        # ajuste DATABASE_URL e demais variáveis
+python manage.py migrate
+python manage.py runserver
+```
 
-<ol>
-<li><a href="documentos/01-Documentação de Contexto.md"> Documentação de Contexto</a></li>
-<li><a href="documentos/02-Especificação do Projeto.md"> Especificação do Projeto</a></li>
-<li><a href="documentos/03-Projeto de Interface.md"> Projeto de Interface</a></li>
-<li><a href="documentos/04-Testes de Software.md"> Testes de Software</a></li>
-<li><a href="documentos/05-Implantação.md"> Implantação</a></li>
-</ol>
+A API sobe em `http://localhost:8000/api/v1/`. Documentação interativa em `/swagger/` e `/redoc/`.
 
-# Código
+### Frontend
 
-<li><a href="codigo-fonte/README.md"> Código Fonte</a></li>
+Pré-requisitos: Node 20+.
 
-# Apresentação
+```bash
+cd frontend
+npm install
+cp .env.example .env             # VITE_API_BASE_URL=http://localhost:8000/api/v1
+npm run dev
+```
 
-<li><a href="apresentacao/README.md"> Apresentação da solução</a></li>
+A aplicação abre em `http://localhost:5173`.
+
+## Testes e qualidade
+
+```bash
+cd backend && python manage.py test --settings=core.settings_test   # SQLite em memória
+cd frontend && npm run lint && npm run build
+```
+
+## Créditos
+
+Projeto criado originalmente como projeto de extensão do curso de Análise e Desenvolvimento de Sistemas da
+PUC Minas (2025/2) por Gabriela Franklin Sá de Moura, Guilherme Pena Matsumura, Lucas Campos de Abreu,
+Rafael Costa Souza e Willams Andrade Lima, com orientação do Prof. José Wilson da Costa.

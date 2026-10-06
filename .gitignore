@@ -1,63 +1,39 @@
+# ---- Segredos / ambiente ----
+.env
+*.env
+!.env.example
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg
 *.egg-info/
-dist/
-build/
-.eggs/
-*.manifest
-*.spec
-
-# ---- Virtual Environments ----
-venv/
-.código-fonte/backend/venv/
 .venv/
-env/
-ENV/
-env.bak/
-venv.bak/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # ---- Django ----
 *.log
-*.pot
-*.pyc
 db.sqlite3
 media/
 staticfiles/
 
-# ---- Envs ----
-*.env
-/codigo-fonte/backend/api/core/.env
+# ---- Node / Vite ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
 
-# ---- VSCode ----
-.vscode/
-*.code-workspace
-/codigo-fonte/backend/pmv-ads-2025-2-e5-proj-empext-t3-commander150.code-workspace
-
-# ---- PyCharm ----
+# ---- Editores / SO ----
 .idea/
-/codigo-fonte/backend/.idea/
-/backend/.idea/
-
-# ---- System ----
+.vscode/*
+!.vscode/extensions.json
+*.code-workspace
 .DS_Store
 Thumbs.db
 
-.idea/.gitignore
-.idea/misc.xml
-.idea/modules.xml
-.idea/pmv-ads-2025-2-e5-proj-empext-t3-commander150.iml
-.idea/vcs.xml
-.idea/workspace.xml
-.idea/inspectionProfiles/profiles_settings.xml
-.idea/inspectionProfiles/Project_Default.xml
-codigo-fonte/backend/.gitignore
-codigo-fonte/backend/README.md
-codigo-fonte/backend/api/core/teste.py
-
-resumo_conteúdo_projeto.txt
-node_modules/
+# ---- Configurações locais do Claude Code ----
+**/.claude/settings.local.json
