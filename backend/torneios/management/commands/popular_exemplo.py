@@ -53,6 +53,8 @@ class Command(BaseCommand):
         for jogador in jogadores:
             Inscricao.objects.get_or_create(id_usuario=jogador, id_torneio=torneio)
 
+        if options['verbosity'] == 0:
+            return
         self.stdout.write(
             self.style.SUCCESS(
                 f'Pronto. Loja: loja@exemplo.com | Jogadores: jogador1..{QTD_JOGADORES}@exemplo.com | Senha: {SENHA}'

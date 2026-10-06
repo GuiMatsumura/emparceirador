@@ -32,22 +32,25 @@ frontend/           SPA React + Vite
   src/services/     cliente HTTP por domínio
   src/pages/        telas
   src/components/   componentes reutilizáveis
-docs/               documentação técnica (ranking, bye, deploy)
+docs/               documentação técnica (arquitetura, ranking, bye, deploy)
 ```
+
+Arquitetura e regras de negócio: [docs/arquitetura.md](docs/arquitetura.md).
 
 ## Rodando localmente
 
 ### Backend
 
-Pré-requisitos: Python 3.12+ e PostgreSQL.
+Pré-requisitos: Python 3.12+. Sem `DATABASE_URL`, o desenvolvimento usa SQLite (`backend/db.sqlite3`); em produção, PostgreSQL.
 
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example core/.env        # ajuste DATABASE_URL e demais variáveis
+cp .env.example core/.env        # ajuste as variáveis (DEBUG=True em desenvolvimento)
 python manage.py migrate
+python manage.py popular_exemplo   # opcional: loja e jogadores de exemplo (senha: senha-exemplo-123)
 python manage.py runserver
 ```
 
@@ -70,8 +73,17 @@ A aplicação abre em `http://localhost:5173`.
 
 ```bash
 cd backend && python manage.py test --settings=core.settings_test   # SQLite em memória
+cd backend && ruff check . && ruff format --check .
 cd frontend && npm run lint && npm run build
 ```
+
+O mesmo roda no CI a cada push (`.github/workflows/ci.yml`).
+
+## Deploy
+
+Variáveis obrigatórias em produção (backend): `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_HOSTS`,
+`CORS_ALLOWED_ORIGINS` e `CSRF_TRUSTED_ORIGINS` com a URL do frontend, `EMAIL_USER`/`EMAIL_PASSWORD`.
+Com `DEBUG` desligado (padrão), a aplicação não sobe sem `SECRET_KEY`. Após atualizar, rode `python manage.py migrate`.
 
 ## Créditos
 

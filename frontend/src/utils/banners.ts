@@ -1,8 +1,8 @@
-import b1 from '../assets/b1.png';
-import b2 from '../assets/b2.png';
-import b3 from '../assets/b3.png';
+import b1 from '../assets/b1.webp';
+import b2 from '../assets/b2.webp';
+import b3 from '../assets/b3.webp';
 
-/** Banners disponíveis. O backend guarda só o nome do arquivo (Torneio.banner). */
+/** Banners disponíveis. O backend guarda o nome original do arquivo (Torneio.banner), por isso as chaves .png. */
 export const BANNERS: Record<string, string> = {
   'b1.png': b1,
   'b2.png': b2,
