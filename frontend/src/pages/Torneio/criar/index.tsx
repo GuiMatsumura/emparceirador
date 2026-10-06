@@ -6,15 +6,12 @@ import Input from "../../../components/Input";
 import Button from "../../../components/Button";
 import Radio from "../../../components/Radio";
 
-// Importar imagens de banner
-import b1 from "../../../assets/b1.png";
-import b2 from "../../../assets/b2.png";
-import b3 from "../../../assets/b3.png";
-
-// Importar serviços e tipos
-import { criarTorneio, tratarErroTorneio } from "../../../services/torneioServico";
-import type { ITorneioCriacao } from "../../../tipos/tipos";
-import Swal from 'sweetalert2';
+import { criarTorneio } from "../../../services/torneioServico";
+import type { ITorneioEntrada } from "../../../tipos/tipos";
+import { alertarAviso, alertarErro, alertarSucesso, escaparHtml } from "../../../utils/alertas";
+import { BANNERS } from "../../../utils/banners";
+import { mensagemDeErro } from "../../../utils/erros";
+import { inputLocalParaIso, mascararMoeda, moedaParaNumero } from "../../../utils/formatacao";
 
 const CriarTorneio: React.FC = () => {
   const navigate = useNavigate();
@@ -50,87 +47,34 @@ const CriarTorneio: React.FC = () => {
 
   const corLabelInputs = "#FFFFFF";
 
-  // Mapear nomes das imagens para os imports
-  const imagensBanner = {
-    "b1.png": b1,
-    "b2.png": b2,
-    "b3.png": b3
-  };
-
-  // Função para formatar valor monetário
-  const formatarValor = (valor: string) => {
-    // Remove caracteres não numéricos
-    const numeros = valor.replace(/\D/g, '');
-    // Converte para centavos e formata
-    const valorFormatado = (parseInt(numeros) / 100).toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    });
-    return valorFormatado;
-  };
-
-  // Função para mapear dados do formulário para o formato da API
-  const mapearDadosParaAPI = async (): Promise<ITorneioCriacao> => {
-    // Construir string ISO manualmente para preservar a hora local exata
-    // O campo datetime-local retorna "2024-01-15T20:35" e queremos salvar exatamente 20:35 no banco
-    // Salvamos sem 'Z' para que o backend interprete como está
-    let dataHoraInicio: string;
-    if (dataHoraTorneio) {
-      const dataLocal = new Date(dataHoraTorneio);
-      const ano = dataLocal.getFullYear();
-      const mes = String(dataLocal.getMonth() + 1).padStart(2, '0');
-      const dia = String(dataLocal.getDate()).padStart(2, '0');
-      const hora = String(dataLocal.getHours()).padStart(2, '0');
-      const minuto = String(dataLocal.getMinutes()).padStart(2, '0');
-      const segundo = String(dataLocal.getSeconds()).padStart(2, '0');
-      dataHoraInicio = `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}`;
-    } else {
-      // Se não forneceu data/hora, usar a data/hora atual com mesma lógica
-      const agora = new Date();
-      const ano = agora.getFullYear();
-      const mes = String(agora.getMonth() + 1).padStart(2, '0');
-      const dia = String(agora.getDate()).padStart(2, '0');
-      const hora = String(agora.getHours()).padStart(2, '0');
-      const minuto = String(agora.getMinutes()).padStart(2, '0');
-      const segundo = String(agora.getSeconds()).padStart(2, '0');
-      dataHoraInicio = `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}`;
-    }
-
-    // Converter valor monetário para número
-    const valorNumerico = modalidadeInscricao === "pago" 
-      ? parseFloat(valorInscricao.replace(/[^\d,]/g, '').replace(',', '.')) || 0
-      : 0;
-
-    return {
-      nome: nomeTorneio,
-      descricao: descricao || undefined,
-      status: "Aberto", // Status padrão para novos torneios
-      regras: regrasTorneio,
-      banner: bannerSelecionado,
-      vagas_limitadas: vagasLimitadas === "limitadas",
-      qnt_vagas: vagasLimitadas === "limitadas" ? parseInt(capacidadeMaxima) || undefined : undefined,
-      inscricao_gratuita: modalidadeInscricao === "gratuito",
-      valor_inscricao: modalidadeInscricao === "pago" ? valorNumerico : undefined,
-      pontuacao_vitoria: parseInt(pontuacaoVitoria) || 3,
-      pontuacao_derrota: parseInt(pontuacaoDerrota) || 0,
-      pontuacao_empate: parseInt(pontuacaoEmpate) || 1,
-      pontuacao_bye: parseInt(pontuacaoBye) || 3,
-      quantidade_rodadas: quantidadeRodadas ? parseInt(quantidadeRodadas) : undefined,
-      data_inicio: dataHoraInicio,
-      id_loja: 1 // TODO: Obter ID da loja do usuário logado
-    };
-  };
+  // Monta o payload da API a partir do formulário
+  const montarDados = (): ITorneioEntrada => ({
+    nome: nomeTorneio,
+    descricao,
+    regras: regrasTorneio,
+    banner: bannerSelecionado,
+    vagas_limitadas: vagasLimitadas === "limitadas",
+    qnt_vagas: vagasLimitadas === "limitadas" ? parseInt(capacidadeMaxima) || null : null,
+    inscricao_gratuita: modalidadeInscricao === "gratuito",
+    valor_inscricao: modalidadeInscricao === "pago" ? moedaParaNumero(valorInscricao) : null,
+    pontuacao_vitoria: parseInt(pontuacaoVitoria) || 3,
+    pontuacao_derrota: parseInt(pontuacaoDerrota) || 0,
+    pontuacao_empate: parseInt(pontuacaoEmpate) || 1,
+    pontuacao_bye: parseInt(pontuacaoBye) || 3,
+    quantidade_rodadas: parseInt(quantidadeRodadas) || null,
+    data_inicio: inputLocalParaIso(dataHoraTorneio),
+  });
 
   // Função de envio do formulário
   const enviarFormulario = async () => {
     // Validações
     if (!nomeTorneio || !dataHoraTorneio) {
-      Swal.fire('Erro', 'Preencha os campos obrigatórios: Nome do Torneio e Data/Hora do Torneio.', 'error');
+      alertarAviso('Atenção', 'Preencha os campos obrigatórios: Nome do Torneio e Data/Hora do Torneio.');
       return;
     }
 
     if (vagasLimitadas === "limitadas" && !capacidadeMaxima) {
-      Swal.fire('Erro', 'Informe a capacidade máxima de jogadores.', 'error');
+      alertarAviso('Atenção', 'Informe a capacidade máxima de jogadores.');
       return;
     }
 
@@ -139,55 +83,12 @@ const CriarTorneio: React.FC = () => {
     setCarregando(true);
 
     try {
-      // Mapear dados para o formato da API
-      const dadosTorneio = await mapearDadosParaAPI();
-      
-      // Chamar a API
-      const torneioCriado = await criarTorneio(dadosTorneio);
-      
-      // Sucesso
-      Swal.fire({
-        title: 'Sucesso!',
-        text: `Torneio "${torneioCriado.nome}" criado com sucesso!`,
-        icon: 'success',
-        confirmButtonText: 'OK'
-      }).then(() => {
-        // Limpar formulário após sucesso
-        setNomeTorneio("");
-        setDataHoraTorneio("");
-        setBannerSelecionado("b1.png");
-        setDescricao("");
-        setRegrasTorneio(`• Formato Commander padrão (100 cartas)
-• Time limit: 50 minutos por partida
-• Banlist oficial da Wizards of the Coast
-• Cada dupla deve ter decks de cores diferentes
-• Proxies não são permitidas
-• Comportamento respeitoso é obrigatório`);
-        setModalidadeInscricao("gratuito");
-        setValorInscricao("R$ 0,00");
-        setVagasLimitadas("limitadas");
-        setCapacidadeMaxima("");
-        setPontuacaoVitoria("3");
-        setPontuacaoDerrota("0");
-        setPontuacaoEmpate("1");
-        setPontuacaoBye("3");
-        setQuantidadeRodadas("");
-
-        // Redirecionar para página inicial
-        navigate("/");
-      });
-
+      const torneioCriado = await criarTorneio(montarDados());
+      await alertarSucesso('Sucesso!', `Torneio "${escaparHtml(torneioCriado.nome)}" criado com sucesso!`);
+      navigate(`/torneios/${torneioCriado.id}`);
     } catch (error) {
-      // Tratar erro
-      const mensagemErro = tratarErroTorneio(error);
-      setErro(mensagemErro);
-      
-      Swal.fire({
-        title: 'Erro ao criar torneio',
-        text: mensagemErro,
-        icon: 'error',
-        confirmButtonText: 'OK'
-      });
+      setErro(mensagemDeErro(error));
+      alertarErro('Erro ao criar torneio', error);
     } finally {
       setCarregando(false);
     }
@@ -233,7 +134,7 @@ const CriarTorneio: React.FC = () => {
              <div className={estilos.selecaoBanner}>
                <label className={estilos.labelBanner}>Banner do Torneio</label>
                <div className={estilos.opcoesBanner}>
-                 {Object.entries(imagensBanner).map(([nome, imagem]) => (
+                 {Object.entries(BANNERS).map(([nome, imagem]) => (
                    <div 
                      key={nome}
                      className={`${estilos.opcaoBanner} ${bannerSelecionado === nome ? estilos.opcaoBannerSelecionada : ''}`}
@@ -287,7 +188,7 @@ const CriarTorneio: React.FC = () => {
                <Input
                  placeholder="R$ 0,00"
                  value={valorInscricao}
-                 onChange={(e) => setValorInscricao(formatarValor(e.target.value))}
+                 onChange={(e) => setValorInscricao(mascararMoeda(e.target.value))}
                  type="text"
                  name="valor-inscricao"
                  label="Valor da Inscrição"
@@ -367,6 +268,18 @@ const CriarTorneio: React.FC = () => {
                type="numero"
                name="pontuacao-bye"
                label="Pontos por Bye"
+               labelColor={corLabelInputs}
+             />
+           </div>
+
+           <div className={estilos.grupoInputs}>
+             <Input
+               placeholder="Sem limite"
+               value={quantidadeRodadas}
+               onChange={(e) => setQuantidadeRodadas(e.target.value)}
+               type="numero"
+               name="quantidade-rodadas"
+               label="Quantidade de Rodadas (opcional)"
                labelColor={corLabelInputs}
              />
            </div>

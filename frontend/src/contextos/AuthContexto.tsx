@@ -1,176 +1,89 @@
 /**
- * AuthContexto (Contexto de Autenticação)
+ * Estado global de autenticação.
  *
- * O QUE É E POR QUE EXISTE?
- * Este arquivo cria um Contexto React, que funciona como um "estado global"
- * para a autenticação. Ele resolve o problema de compartilhar informações
- * (como os dados do usuário logado) entre diferentes componentes da
- * aplicação sem a necessidade de passar 'props' por múltiplos níveis.
- *
- * RESPONSABILIDADES:
- * 1. Manter o estado do usuário (logado ou não) e um estado de carregamento inicial.
- * 2. Expor as funções de 'login' e 'logout' para serem usadas por qualquer componente.
- * 3. Chamar o 'authServico' para verificar a validade da sessão quando a
- * aplicação é iniciada.
- *
- * COMO USAR:
- * 1. O componente 'GerenciadorSessao' deve envolver a árvore de componentes
- * que precisa de acesso ao estado de autenticação (geralmente no main.tsx).
- * 2. Em qualquer componente filho, use o hook 'useSessao()' para acessar os
- * dados e as funções.
- *
- * Exemplo de uso em um componente:
- *
- * import { useSessao } from '../contextos/AuthContexto';
- *
- * function MinhaNavbar() {
- * const { usuario, logout } = useSessao();
- *
- * return (
- * <nav>
- * {usuario ? `Olá, ${usuario.username}` : 'Você não está logado'}
- * <button onClick={logout}>Sair</button>
- * </nav>
- * );
- * }
+ * O <GerenciadorSessao> (em main.tsx) verifica a sessão ao carregar a aplicação e expõe,
+ * via useSessao(), o usuário logado e as funções de login/logout.
  */
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { createContext, useState, useEffect, useContext, type ReactNode } from 'react';
-import { AxiosError } from 'axios';
-import Swal from 'sweetalert2';
-import { useNavigate } from 'react-router-dom';
+import { efetuarLogin, efetuarLogout, verificarSessao } from '../services/authServico';
+import type { ILoginCredenciais, IUsuario } from '../tipos/tipos';
+import { alertarErro } from '../utils/alertas';
 
-import { efetuarLogin, efetuarLogout, verificarSessao} from '../services/authServico';
-import type { IUsuario, ILoginCredenciais } from '../tipos/tipos';
+/** Tamanho mínimo aceito no campo de senha do login (contas antigas podem ter senhas curtas). */
+const QTD_MINIMA_SENHA = 4;
+/** Tamanho do token de redefinição de senha enviado por e-mail. */
+const QTD_CARACTERES_TOKEN = 16;
 
-// Define a "planta baixa" do contexto, especificando quais
-// informações e funções ele irá fornecer.
 interface IAuthContexto {
   usuario: IUsuario | null;
   carregandoSessao: boolean;
   qtdCaracteresSenha: number;
   qtdCaracteresToken: number;
+  /** Faz login; em caso de erro, mostra o alerta e relança a exceção. */
   login: (credenciais: ILoginCredenciais) => Promise<void>;
   logout: () => Promise<void>;
+  /** Limpa o usuário localmente (ex: após trocar a senha a sessão é encerrada no servidor). */
   resetUsuario: () => void;
-  };
-
-// Cria o Contexto React. O valor inicial é 'undefined', pois só será
-// populado pelo componente 'GerenciadorSessao'.
-const AuthContexto = createContext<IAuthContexto | undefined>(undefined);
-
-interface GerenciadorSessaoProps {
-  children: ReactNode;
 }
 
-// Componente Provedor que gerencia o estado e a lógica da autenticação.
-export const GerenciadorSessao = ({ children }: GerenciadorSessaoProps) => {
+const AuthContexto = createContext<IAuthContexto | undefined>(undefined);
 
+export const GerenciadorSessao = ({ children }: { children: ReactNode }) => {
   const [usuario, setUsuario] = useState<IUsuario | null>(null);
-  // O estado de carregamento é crucial para a experiência do usuário,
-  // evitando que a tela "pisque" ou mostre conteúdo indevido enquanto
-  // a sessão inicial está sendo verificada.
   const [carregandoSessao, setCarregandoSessao] = useState(true);
-  // const navigate = useNavigate();
 
-  // forçar reset do usuário
-  const resetUsuario = () => setUsuario(null);
-
-
-  // Efeito que executa apenas uma vez na inicialização do componente
-  // para verificar se já existe uma sessão de usuário válida.
   useEffect(() => {
-    const checarSessaoAoCarregar = async () => {
-      try {
-        // A função 'verificarSessao' é chamada.
-        // Ela retornará os dados do utilizador (se a resposta for 200 OK)
-        // ou uma resposta vazia (se a resposta for 204 No Content).
-        const usuarioLogado = await verificarSessao();
-
-        // Verifica se 'usuarioLogado' contém dados.
-        // Se o backend respondeu com 204, 'usuarioLogado' será 'falsy' (ex: string vazia).
-        // Apenas define o estado do usuarioLogado se dados válidos foram retornados.
-        if (usuarioLogado) {
-          setUsuario(usuarioLogado);
-        } else {
-          // Se não foram retornados dados, significa que não há sessão ativa.
-          setUsuario(null);
-        }
-      } catch (error) {
-        // O bloco 'catch' serve como uma salvaguarda para erros inesperados de rede, 
-        // mas o caso esperado de "sem sessão" já foi tratado no bloco 'try'.
-        Swal.fire('Erro inesperado ao verificar a sessão', `${error}`, 'error');
+    verificarSessao()
+      .then(setUsuario)
+      .catch((erro) => {
         setUsuario(null);
-      } finally {
-        // Finaliza o estado de carregamento inicial, independentemente do resultado.
-        setCarregandoSessao(false);
-      }
-    };
-
-    checarSessaoAoCarregar();
+        alertarErro('Erro ao verificar a sessão', erro);
+      })
+      .finally(() => setCarregandoSessao(false));
   }, []);
-  
-  // Define a quantidade mínima de caracteres para a senha.
-  const qtdCaracteresSenha = 4;
 
-  // Define a quantidade mínima de caracteres para o token de recuperação.
-  const qtdCaracteresToken = 16;
-
-  // Função para realizar o login do usuário.
-  const login = async (credenciais: ILoginCredenciais) => {
+  const login = useCallback(async (credenciais: ILoginCredenciais) => {
     try {
-      const usuarioLogado = await efetuarLogin(credenciais);
-      setUsuario(usuarioLogado);
-    } catch (error) {
-      // Captura o erro do Axios e exibe uma mensagem amigável.
-      const axiosError = error as AxiosError<{ detail: string }>;
-      const mensagemErro = axiosError.response?.data?.detail || "Ocorreu um erro desconhecido.";
-      Swal.fire('Erro no Login', mensagemErro, 'error');
-      // Garante que o estado de erro seja relançado para que o componente
-      // que chamou a função saiba que o login falhou.
-      throw error;
+      setUsuario(await efetuarLogin(credenciais));
+    } catch (erro) {
+      alertarErro('Erro no login', erro);
+      throw erro;
     }
-  };
+  }, []);
 
-
-  // Função para realizar o logout do usuário.
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await efetuarLogout();
       setUsuario(null);
-    } catch {
-      Swal.fire('Erro no Logout', 'Não foi possível encerrar a sessão.', 'error');
+    } catch (erro) {
+      alertarErro('Erro ao sair', erro);
     }
-  };
-  
- 
-  // Agrupa todos os valores e funções que serão fornecidos pelo contexto.
-  const valor = {
-    usuario,
-    carregandoSessao,
-    qtdCaracteresSenha,
-    qtdCaracteresToken,
-    login,
-    logout,
-    resetUsuario
-  };
+  }, []);
 
-  // O componente Provedor que disponibiliza o 'valor' para todos os seus 'filhos'.
-  return (
-    <AuthContexto.Provider value={valor}>
-      {children}
-    </AuthContexto.Provider>
+  const resetUsuario = useCallback(() => setUsuario(null), []);
+
+  const valor = useMemo(
+    () => ({
+      usuario,
+      carregandoSessao,
+      qtdCaracteresSenha: QTD_MINIMA_SENHA,
+      qtdCaracteresToken: QTD_CARACTERES_TOKEN,
+      login,
+      logout,
+      resetUsuario,
+    }),
+    [usuario, carregandoSessao, login, logout, resetUsuario],
   );
+
+  return <AuthContexto.Provider value={valor}>{children}</AuthContexto.Provider>;
 };
 
-// Hook customizado que simplifica o uso do contexto nos componentes.
 // eslint-disable-next-line react-refresh/only-export-components
 export const useSessao = (): IAuthContexto => {
   const contexto = useContext(AuthContexto);
-
   if (contexto === undefined) {
     throw new Error('useSessao deve ser usado dentro de um GerenciadorSessao');
   }
-
   return contexto;
 };

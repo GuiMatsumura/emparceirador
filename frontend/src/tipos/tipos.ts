@@ -1,180 +1,167 @@
 /**
- * Arquivo central para a definição de tipos e interfaces TypeScript.
- * Manter os tipos centralizados ajuda a garantir consistência e a
- * reutilização em toda a aplicação.
+ * Tipos compartilhados. Refletem exatamente o que a API (backend/) envia e recebe.
  */
 
-// Para cadastro (requisição)
-export interface IUsuarioCadastro {
-  email: string;
-  username: string;
-  password: string;
-  tipo: 'JOGADOR' | 'LOJA' | 'ADMIN';
-}
+// ===== Usuário =====
 
-// Interface para usuário
+export type TipoUsuario = 'JOGADOR' | 'LOJA' | 'ADMIN';
+
 export interface IUsuario {
   id: number;
   email: string;
   username: string;
-  tipo: 'JOGADOR' | 'LOJA' | 'ADMIN';
+  tipo: TipoUsuario;
   status: string;
-  perfil?: string;  // Optional property for legacy support
-  role?: string;    // Optional property for legacy support
+  date_joined: string;
 }
 
-// Define a estrutura das credenciais necessárias para o login.
+export interface IUsuarioCadastro {
+  email: string;
+  username: string;
+  password: string;
+  tipo: Exclude<TipoUsuario, 'ADMIN'>;
+}
+
 export interface ILoginCredenciais {
   email: string;
-  password?: string; // O nome do campo deve ser 'password' como esperado pelo backend
+  password: string;
 }
 
-// ===== TIPOS PARA TORNEIO =====
+// ===== Torneio =====
 
-// Para criação de torneio (requisição)
-export interface ITorneioCriacao {
-  nome: string;
-  descricao?: string;
-  status: string;
-  regras: string;
-  banner?: string;
-  vagas_limitadas: boolean;
-  qnt_vagas?: number;
-  inscricao_gratuita: boolean;
-  valor_inscricao?: number;
-  pontuacao_vitoria: number;
-  pontuacao_derrota: number;
-  pontuacao_empate: number;
-  pontuacao_bye: number;
-  quantidade_rodadas?: number;
-  data_inicio: string; // ISO 8601 format
-  id_loja: number;
-}
+export type StatusTorneio = 'Aberto' | 'Em Andamento' | 'Finalizado' | 'Cancelado';
 
-// Para atualização de torneio (requisição)
-export interface ITorneioAtualizacao {
-  nome: string;
-  status: string;
-  pontuacao_vitoria: number;
-  pontuacao_empate: number;
-  pontuacao_derrota: number;
-  pontuacao_bye: number;
-  quantidade_rodadas: number;
-  data_fim: string; // ISO 8601 format
-  id_loja: number;
-}
-
-// Para resposta da API (retorno)
 export interface ITorneio {
   id: number;
+  id_loja: number;
   loja_nome: string;
   loja_email: string;
-  loja_tipo: string;
+  loja_tipo: TipoUsuario;
   nome: string;
-  descricao?: string | null;
-  status: string;
-  regras?: string | null;
-  banner?: string | null;
+  descricao: string;
+  status: StatusTorneio;
+  regras: string;
+  banner: string;
   vagas_limitadas: boolean;
-  qnt_vagas?: number | null;
+  qnt_vagas: number | null;
+  qnt_inscritos: number;
   inscricao_gratuita: boolean;
-  valor_inscricao?: number | null;
+  /** Decimal serializado como string (ex: "15.00"). */
+  valor_inscricao: string | null;
   pontuacao_vitoria: number;
   pontuacao_derrota: number;
   pontuacao_empate: number;
   pontuacao_bye: number;
-  quantidade_rodadas?: number | null;
-  data_inicio: string; // ISO 8601 format
-  data_fim?: string | null; // ISO 8601 format
-  id_loja: number;
-  data_criacao?: string;
-  data_atualizacao?: string;
+  quantidade_rodadas: number | null;
+  data_inicio: string;
 }
 
-// Para listagem de torneios (resposta da API)
-export interface IListaTorneios {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: ITorneio[];
+/** Campos enviados ao criar/editar um torneio (status e dono são definidos pelo backend). */
+export interface ITorneioEntrada {
+  nome: string;
+  descricao: string;
+  regras: string;
+  banner: string;
+  vagas_limitadas: boolean;
+  qnt_vagas: number | null;
+  inscricao_gratuita: boolean;
+  valor_inscricao: number | null;
+  pontuacao_vitoria: number;
+  pontuacao_derrota: number;
+  pontuacao_empate: number;
+  pontuacao_bye: number;
+  quantidade_rodadas: number | null;
+  data_inicio: string;
 }
-// Para inscrições (inscrição do jogador em um torneio)
+
+// ===== Inscrição =====
+
+export type StatusInscricao = 'Inscrito' | 'Cancelado';
+
 export interface IInscricao {
   id: number;
+  id_usuario: number;
+  username: string;
+  email: string;
   id_torneio: number;
-  nome_torneio?: string;
-  status?: string;
-  data_inscricao?: string;
+  nome_torneio: string;
+  decklist: string;
+  status: StatusInscricao;
+  data_inscricao: string;
 }
 
-// ===== TIPOS PARA MESA =====
+// ===== Rodada e mesa =====
 
-// Jogador em um time
+export type StatusRodada = 'Emparelhamento' | 'Em Andamento' | 'Finalizada';
+
+export interface IRodada {
+  id: number;
+  id_torneio: number;
+  numero_rodada: number;
+  status: StatusRodada;
+  data_inicio: string | null;
+}
+
+/** 0 = empate, 1 = Time 1, 2 = Time 2, null = resultado ainda não reportado. */
+export type ResultadoMesa = 0 | 1 | 2 | null;
+
 export interface IJogadorMesa {
   id: number;
   id_usuario: number;
   username: string;
   email: string;
-  time: number;
+  time: 1 | 2;
 }
 
-// Mesa ativa do jogador (resposta da API)
+/** Mesa na visão geral da rodada (loja). */
+export interface IMesaRodada {
+  id: number;
+  id_rodada: number;
+  numero_rodada: number;
+  nome_torneio: string;
+  numero_mesa: number;
+  time_vencedor: ResultadoMesa;
+  pontuacao_time_1: number;
+  pontuacao_time_2: number;
+  jogadores: IJogadorMesa[];
+}
+
+/** Mesa vista pelo jogador que está nela. */
 export interface IMesaAtiva {
   id: number;
   numero_mesa: number;
   id_torneio: number;
   nome_torneio: string;
   numero_rodada: number;
-  status_rodada: string;
+  status_rodada: StatusRodada;
   pontuacao_time_1: number;
   pontuacao_time_2: number;
-  time_vencedor: number | null; // 0=Empate, 1=Time 1, 2=Time 2, null=Não definido
+  time_vencedor: ResultadoMesa;
   time_1: IJogadorMesa[];
   time_2: IJogadorMesa[];
-  meu_time?: number; // Adicionado pela view para indicar em qual time o jogador está
+  meu_time: 1 | 2;
 }
 
-// ===== TIPOS PARA RODADA =====
-
-// Rodada de torneio
-export interface IRodada {
+export interface IParticipante {
   id: number;
-  numero_rodada: number;
-  id_torneio: number;
-  status: string; // "Aguardando", "Em andamento", "Finalizada"
-  data_inicio?: string | null;
-  data_fim?: string | null;
-  data_criacao?: string;
+  username: string;
+  email: string;
 }
 
-// Mesa de uma rodada (visão administrativa)
-export interface IMesaRodada {
-  id: number;
-  numero_mesa: number;
-  id_rodada: number;
-  numero_rodada: number;
-  nome_torneio: string;
-  pontuacao_time_1: number;
-  pontuacao_time_2: number;
-  time_vencedor: number | null; // 0=Empate, 1=Time 1, 2=Time 2, null=Não definido
-  jogadores: IJogadorMesa[];
-}
+// ===== Ranking =====
 
-// ===== TIPOS PARA RANKING =====
-
-// Jogador no ranking (resposta da API)
 export interface IJogadorRanking {
   posicao: number;
   jogador_id: number;
   jogador_nome: string;
   pontos: number;
-  mw_percentage?: number;    // Match Win % - Aproveitamento individual
-  omw_percentage?: number;   // Opponent Match Win % - Força dos oponentes
-  pmw_percentage?: number;   // Partner Match Win % - Força dos parceiros
-  balanco?: number;          // OMW% - PMW% - Métrica de mérito individual
+  /** Métricas de desempate: só existem para rodadas finalizadas. */
+  mw_percentage?: number;
+  omw_percentage?: number;
+  pmw_percentage?: number;
+  balanco?: number;
 }
 
-// Resposta da API de ranking
 export interface IRankingRodada {
   rodada_numero: number;
   ranking: IJogadorRanking[];

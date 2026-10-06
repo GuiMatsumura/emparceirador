@@ -16,7 +16,7 @@ import styles from './styles.module.css';
 import Input from '../../../components/Input';
 import Button from '../../../components/Button';
 import { alterarSenhaUsuario} from '../../../services/authServico';
-import Swal from "sweetalert2";
+import { alertarAviso, alertarErro, alertarSucesso } from '../../../utils/alertas';
 
 
 const PaginaAlterarSenha = () => {
@@ -36,64 +36,31 @@ const PaginaAlterarSenha = () => {
   // Função executada quando o formulário é submetido.
   const handleSubmit = async (evento: FormEvent) => {
     evento.preventDefault();
-    
-    if (!senhaAntiga || !novaSenha) {
-        Swal.fire(
-            'Erro na alteração',
-            'Prencha todos os campos.',
-            'error'
-            );
-    
-          return;
-    }
 
-    // Lógica de alteração de senha
-    if (!usuario) {
-      Swal.fire({
-      icon: "error",
-      title: "Erro na alteração",
-      text: "Usuário não autenticado. Faça login novamente.",
-      confirmButtonText: "Tentar novamente"
-    })
-      resetUsuario();
-      navigate("/login/");
+    if (!senhaAntiga || !novaSenha) {
+      alertarAviso('Erro na alteração', 'Preencha todos os campos.');
       return;
     }
+    if (!usuario) {
+      resetUsuario();
+      navigate('/login/');
+      return;
+    }
+
     try {
       setLoading(true);
-      const resultado = await alterarSenhaUsuario(usuario.id, senhaAntiga, novaSenha);
-
-      if (resultado.success) {
-        Swal.fire({
-          icon: "success",
-          title: "Senha alterada com sucesso!",
-          text:  "Faça login novamente para autenticar.",
-          confirmButtonText: "Ok"
-        }).then(() => {
-          resetUsuario();
-          navigate("/login/");
-        });
-      } else {
-        Swal.fire({
-          icon: "error",
-          title: "Erro",
-          text: resultado.message,
-          confirmButtonText: "Tentar novamente"
-        });
-      }
-    } catch (error) {
-      Swal.fire({
-        icon: "error",
-        title: "Erro",
-        text: `Ocorreu um erro inesperado. Tente novamente. (${error})`,
-        confirmButtonText: "Ok"
-      });
+      await alterarSenhaUsuario(usuario.id, senhaAntiga, novaSenha);
+      // Trocar a senha encerra a sessão no servidor: pede login de novo.
+      await alertarSucesso('Senha alterada com sucesso!', 'Faça login novamente para continuar.');
+      resetUsuario();
+      navigate('/login/');
+    } catch (erro) {
+      alertarErro('Erro na alteração', erro);
     } finally {
       setLoading(false);
     }
   };
 
-  
   return (
     <div className={styles.container}>
       <form className={styles.card} onSubmit={handleSubmit}>

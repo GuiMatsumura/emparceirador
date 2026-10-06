@@ -439,7 +439,7 @@ ORDER BY r.numero_rodada, m.id, jm.time;
 ## 📊 CHECKLIST GERAL
 
 ### Antes de Testar:
-- [ ] Código atualizado em `ranking_utils.py`
+- [ ] Código atualizado em `ranking.py`
 - [ ] Servidor Django reiniciado
 - [ ] Banco de dados acessível
 

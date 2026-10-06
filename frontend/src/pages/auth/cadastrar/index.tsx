@@ -18,8 +18,8 @@ import Input from '../../../components/Input';
 import Button from '../../../components/Button';
 import Radio from '../../../components/Radio';
 import { cadastrarUsuario } from '../../../services/authServico';
-import Swal from 'sweetalert2';
 import { useSessao } from '../../../contextos/AuthContexto';
+import { alertarAviso, alertarErro, alertarSucesso, escaparHtml } from '../../../utils/alertas';
 
 
 // 2. Define as opções para o nosso grupo de rádio.
@@ -45,7 +45,7 @@ const PaginaCadastrar = () => {
     evento.preventDefault();
 
     if (!email || !senha || !nome || !tipo) {
-      Swal.fire('Erro no Cadastro', 'Preencha todos os campos.', 'error');
+      alertarAviso('Erro no cadastro', 'Preencha todos os campos.');
       return;
     }
 
@@ -63,18 +63,11 @@ const PaginaCadastrar = () => {
       // 2. Faz login automático
       await login({ email, password: senha });
 
-      // 3. Exibe sucesso e redireciona para página inicial (ou dashboard)
-      Swal.fire(
-        'Cadastro e Login Realizados!',
-        `Bem-vindo, ${nome}!`,
-        'success'
-      ).then(() => {
-        // Redireciona para a página de acordo com o tipo de usuário
-        navigate('/');
-      });
-
+      // 3. Exibe sucesso e redireciona para a página inicial
+      await alertarSucesso('Cadastro realizado!', `Bem-vindo, ${escaparHtml(nome)}!`);
+      navigate('/');
     } catch (error) {
-      Swal.fire("Erro no cadastro!", (error as Error).message, "error");
+      alertarErro('Erro no cadastro', error);
     } finally {
       setLoading(false);
     }

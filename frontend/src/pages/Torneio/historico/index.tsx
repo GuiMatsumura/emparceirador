@@ -1,430 +1,226 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { FiUser, FiStar, FiCalendar } from "react-icons/fi";
-import { useNavigate } from "react-router-dom";
-import styles from "./styles.module.css";
-import { CardSuperior } from "../../../components/CardSuperior";
-import CardInfoTorneio from "../../../components/CardInfoTorneio";
-import Button from "../../../components/Button";
-import ModalInscricaoJogador from "../../../components/ModalInscricaoJogador";
+import { useCallback, useEffect, useState } from 'react';
+import { FiCalendar, FiStar, FiUser } from 'react-icons/fi';
+import { useNavigate } from 'react-router-dom';
+
+import Button from '../../../components/Button';
+import CardInfoTorneio from '../../../components/CardInfoTorneio';
+import { CardSuperior } from '../../../components/CardSuperior';
+import ModalInscricaoJogador from '../../../components/ModalInscricaoJogador';
+import { useSessao } from '../../../contextos/AuthContexto';
+import { sairDoTorneio } from '../../../services/inscricaoServico';
 import {
-    buscarAgrupadoPorAba,
-    buscarAgrupadoPorAbaLoja,
-    desinscreverDoTorneio,
-    contarInscritosTorneio,
-} from "../../../services/torneioServico";
-import Swal from "sweetalert2";
-import { useSessao } from "../../../contextos/AuthContexto";
-import { verificarSessao } from "../../../services/authServico";
-import type { IUsuario } from "../../../tipos/tipos";
-import { buscarRodadasDoTorneio } from "../../../services/mesaServico";
+  agruparTorneiosDaLoja,
+  agruparTorneiosDoJogador,
+  type TorneiosAgrupados,
+} from '../../../services/torneioServico';
+import type { ITorneio } from '../../../tipos/tipos';
+import { alertarErro, alertarSucesso, confirmar } from '../../../utils/alertas';
+import { mensagemDeErro } from '../../../utils/erros';
+import { formatarData, formatarHora, formatarPreco } from '../../../utils/formatacao';
+import styles from './styles.module.css';
 
-type Aba = "inscritos" | "andamento" | "historico";
+type Aba = 'inscritos' | 'andamento' | 'historico';
 
-const EmptyState: React.FC<{ aba: Aba }> = ({ aba }) => {
-    const messages = {
-        inscritos: "Você não está inscrito em nenhum torneio no momento.",
-        andamento: "Nenhum torneio em andamento.",
-        historico: "Nenhum torneio no histórico.",
-    };
-    return <div className={styles.vazio}>{messages[aba]}</div>;
+const VAZIO: TorneiosAgrupados = { abertos: [], andamento: [], historico: [] };
+
+const TEXTOS = {
+  loja: {
+    inscritos: { titulo: 'Seus Torneios', subtitulo: 'Acompanhe seus torneios e crie batalhas épicas!' },
+    andamento: { titulo: 'Torneios em Andamento', subtitulo: 'Acompanhe seus torneios em andamento e as suas batalhas' },
+    historico: { titulo: 'Histórico', subtitulo: 'Reviva os momentos épicos dos seus torneios passados' },
+  },
+  jogador: {
+    inscritos: {
+      titulo: 'Torneios Inscritos',
+      subtitulo: 'Acompanhe seus torneios inscritos e participe das batalhas épicas',
+    },
+    andamento: { titulo: 'Torneios em Andamento', subtitulo: 'Acompanhe seus torneios em andamento e as suas batalhas' },
+    historico: { titulo: 'Histórico de Torneios', subtitulo: 'Reviva os momentos épicos dos seus torneios passados' },
+  },
+} as const;
+
+const MENSAGEM_VAZIA: Record<Aba, string> = {
+  inscritos: 'Você não está inscrito em nenhum torneio no momento.',
+  andamento: 'Nenhum torneio em andamento.',
+  historico: 'Nenhum torneio no histórico.',
 };
 
-const HistoricoTorneios: React.FC = () => {
-    const { usuario } = useSessao?.() ?? ({} as any);
-    const navigate = useNavigate();
-    const tipoBruto = (usuario?.tipo ?? usuario?.perfil ?? usuario?.role ?? "").toString();
-    const isLoja = tipoBruto.toUpperCase() === "LOJA";
+/** "Meus ingressos" (jogador) / "Meus eventos" (loja): torneios separados por situação. */
+const HistoricoTorneios = () => {
+  const { usuario } = useSessao();
+  const navigate = useNavigate();
+  const ehLoja = usuario?.tipo === 'LOJA';
+  const textos = ehLoja ? TEXTOS.loja : TEXTOS.jogador;
 
-    // Estado de página
-    const [aba, setAba] = useState<Aba>("inscritos");
-    const [inscritos, setInscritos] = useState<any[]>([]);
-    const [andamento, setAndamento] = useState<any[]>([]);
-    const [historico, setHistorico] = useState<any[]>([]);
-    const [carregando, setCarregando] = useState(false);
-    const [erro, setErro] = useState<string | null>(null);
-    const [loadingAcao, setLoadingAcao] = useState<Record<number, boolean>>({});
+  const [aba, setAba] = useState<Aba>('inscritos');
+  const [grupos, setGrupos] = useState<TorneiosAgrupados>(VAZIO);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [saindoDe, setSaindoDe] = useState<number | null>(null);
+  const [torneioParaInscrever, setTorneioParaInscrever] = useState<ITorneio | null>(null);
 
-    // Estados do modal
-    const [modalAberto, setModalAberto] = useState(false);
-    const [torneioSelecionado, setTorneioSelecionado] = useState<{ id: number; nome: string } | null>(null);
-
-    const handleCardClick = useCallback(async (tournamentId: number) => {
-    if (!tournamentId) return;
-
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    setErro(null);
     try {
-        const usuario: IUsuario = await verificarSessao();
-
-        // Navegação baseada na ABA
-        if (usuario.tipo === "JOGADOR") {
-            // ABA "EM ANDAMENTO" => verifica se deve ir para MESA ATIVA ou INTERVALO
-            if (aba === "andamento") {
-                const dadosTorneio = await buscarRodadasDoTorneio(tournamentId);
-                const rodadaAtiva = dadosTorneio.find(rodada => rodada.status.toLowerCase() !== 'finalizada');
-                const rodadaId = rodadaAtiva ? rodadaAtiva.id : null;
-
-                if (rodadaId && rodadaAtiva) {
-                    const statusRodada = rodadaAtiva.status?.toLowerCase() || '';
-                    console.log('Rodada ativa encontrada:', statusRodada);
-                    const statusComMesaAtiva = ['ativa', 'em andamento', 'iniciada', 'bye'];
-                    const statusEmPreparacao = ['emparelhamento', 'aguardando início', 'preparação', 'sortendo mesas'];
-                    
-                    if (statusComMesaAtiva.includes(statusRodada)) {
-                        // Rodada ativa - navegar para intervalo com mesa ativa
-                        navigate(`/intervalo/${tournamentId}`, {
-                            state: { 
-                                abrirMesaAtiva: true,
-                                rodadaId: rodadaId
-                            }
-                        });
-                    } else if (statusEmPreparacao.includes(statusRodada)) {
-                        navigate(`/intervalo/${tournamentId}`);
-                    } else {
-                        navigate(`/intervalo/${tournamentId}`);
-                    }
-                } else {
-                    // Nenhuma rodada ativa encontrada - ir para intervalo
-                    navigate(`/intervalo/${tournamentId}`);
-                }
-                return;
-            }
-        
-            if (aba === "historico") {
-                navigate(`/intervalo/${tournamentId}`);
-                return;
-            }
-            
-            // ABA "Abertos" => vai para DETALHES DO TORNEIO
-            if (aba === "inscritos"){ 
-                navigate(`/torneios/${tournamentId}`);
-                return;
-            }
-            // ABA "Inscritos" (default) => vai para DETALHES DO TORNEIO
-            navigate(`/torneios/${tournamentId}`);
-        }
-    
-        navigate(`/torneios/${tournamentId}`);
-
-    } catch (error) {
-        console.error("Erro ao processar navegação:", error);
+      setGrupos(await (ehLoja ? agruparTorneiosDaLoja() : agruparTorneiosDoJogador()));
+    } catch (e) {
+      setErro(mensagemDeErro(e, 'Não foi possível carregar os torneios.'));
+    } finally {
+      setCarregando(false);
     }
-}, [aba, navigate]);
-    // Carregamento inicial
-    const carregar = useCallback(async () => {
-        setCarregando(true);
-        setErro(null);
-        try {
-            if (isLoja) {
-                // LOJA: funcao auxiliar para trazer o total de inscritos em cada torneio.
-                const { seus, andamento, historico } = await buscarAgrupadoPorAbaLoja();
+  }, [ehLoja]);
 
-                const anexarQtdInscritos = async (lista: any[]) => {
-                    return Promise.all(
-                        (lista || []).map(async (t) => {
-                            try {
-                                const total = await contarInscritosTorneio(t.id); // loja enxerga todos
-                                return { ...t, qnt_inscritos: total };
-                            } catch {
-                                return t;
-                            }
-                        })
-                    );
-                };
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
 
-                const [seusComQtd, andamentoComQtd, historicoComQtd] = await Promise.all([
-                    anexarQtdInscritos(seus),
-                    anexarQtdInscritos(andamento),
-                    anexarQtdInscritos(historico),
-                ]);
+  const listas: Record<Aba, ITorneio[]> = {
+    inscritos: grupos.abertos,
+    andamento: grupos.andamento,
+    historico: grupos.historico,
+  };
+  const listaAtiva = listas[aba];
 
-                setInscritos(seusComQtd);
-                setAndamento(andamentoComQtd);
-                setHistorico(historicoComQtd);
-            } else {
-                // JOGADOR: nao se tentará contar porque a API devolve somente a própria inscrição (regra do backend)
-                const { abertos, andamento, historico } = await buscarAgrupadoPorAba();
+  const abrirTorneio = (torneio: ITorneio) => {
+    // Jogador acompanha torneios iniciados pela tela de intervalo/mesa
+    if (!ehLoja && aba !== 'inscritos') {
+      navigate(`/intervalo/${torneio.id}`);
+    } else {
+      navigate(`/torneios/${torneio.id}`, { state: { aba } });
+    }
+  };
 
-                setInscritos(abertos || []);
-                setAndamento(andamento || []);
-                setHistorico(historico || []);
-            }
-        } catch (e: any) {
-            console.error(e);
-            setErro("Não foi possível carregar os torneios.");
-        } finally {
-            setCarregando(false);
-        }
-    }, [isLoja]);
+  const sair = async (torneio: ITorneio) => {
+    const confirmou = await confirmar({
+      titulo: `Desinscrever-se do torneio "${torneio.nome}"?`,
+      confirmar: 'Sim, desinscrever',
+      cancelar: 'Não',
+    });
+    if (!confirmou) return;
 
-    useEffect(() => {
-        carregar();
-    }, [carregar]);
+    setSaindoDe(torneio.id);
+    try {
+      await sairDoTorneio(torneio.id, torneio.status);
+      await alertarSucesso('Desinscrição concluída', 'Você foi desinscrito do torneio com sucesso.');
+      carregar();
+    } catch (e) {
+      alertarErro('Erro ao desinscrever', e);
+    } finally {
+      setSaindoDe(null);
+    }
+  };
 
-    // Cabeçalho
-    const tituloPagina = useMemo(() => {
-        if (isLoja) {
-            if (aba === "inscritos") return "Seus Torneios";
-            if (aba === "andamento") return "Torneios em Andamento";
-            return "Histórico";
-        }
-        if (aba === "inscritos") return "Torneios Inscritos";
-        if (aba === "andamento") return "Torneios em Andamento";
-        return "Histórico de Torneios";
-    }, [aba, isLoja]);
-
-    const subtituloPagina = useMemo(() => {
-        if (isLoja) {
-            if (aba === "inscritos") return "Acompanhe seus torneios e crie batalhas épicas!";
-            if (aba === "andamento")
-                return "Acompanhe seus torneios em andamento e as suas batalhas";
-            return "Reviva os momentos épicos dos seus torneios passados";
-        }
-        if (aba === "inscritos")
-            return "Acompanhe seus torneios inscritos e participe das batalhas épicas";
-        if (aba === "andamento")
-            return "Acompanhe seus torneios em andamento e as suas batalhas";
-        return "Reviva os momentos épicos dos seus torneios passados";
-    }, [aba, isLoja]);
-
-    // Estatísticas
-    const estatisticas = useMemo(
-        () => ({
-            torneiosFuturos: inscritos.length,
-            torneiosEmAndamento: andamento.length,
-            torneiosHistorico: historico.length,
-        }),
-        [inscritos, andamento, historico]
-    );
-
-    const listaAtiva = useMemo(() => {
-        if (aba === "inscritos") return inscritos;
-        if (aba === "andamento") return andamento;
-        return historico;
-    }, [aba, inscritos, andamento, historico]);
-
-    // Ação de desinscrição
-    const onUnsubscribe = useCallback(async (torneioId: number, torneioNome?: string) => {
-        const result = await Swal.fire({
-            title: `Gostaria de desinscrever-se do torneio ${torneioNome ? `"${torneioNome}"` : ""}?`,
-            icon: "question",
-            showCancelButton: true,
-            confirmButtonText: "Sim",
-            cancelButtonText: "Não",
-            reverseButtons: true,
-            confirmButtonColor: "#46AF87",
-            cancelButtonColor: "#6c757d",
-            focusCancel: true,
-        });
-
-        if (!result.isConfirmed) return;
-
-        setLoadingAcao((p) => ({ ...p, [torneioId]: true }));
-        try {
-            await desinscreverDoTorneio(torneioId);
-            setInscritos((prev) => prev.filter((t) => Number(t.id) !== Number(torneioId)));
-
-            await Swal.fire({
-                title: "Desinscrição concluída",
-                text: "Você foi desinscrito do torneio com sucesso.",
-                icon: "success",
-                confirmButtonText: "OK",
-                confirmButtonColor: "#46AF87",
-            });
-            carregar();
-        } catch (e: any) {
-            console.error("Erro ao desinscrever:", e?.response?.data || e);
-            await Swal.fire({
-                title: "Erro ao desinscrever",
-                text: "Não foi possível desinscrever-se do torneio. Tente novamente.",
-                icon: "error",
-                confirmButtonText: "OK",
-                confirmButtonColor: "#DC2626",
-            });
-        } finally {
-            setLoadingAcao((p) => ({ ...p, [torneioId]: false }));
-        }
-    }, [carregar]);
-
-    // Modal
-    const handleAbrirModalInscricao = (torneioId: number, torneioNome: string) => {
-        setTorneioSelecionado({ id: torneioId, nome: torneioNome });
-        setModalAberto(true);
-    };
-    const handleFecharModal = () => {
-        setModalAberto(false);
-        setTorneioSelecionado(null);
-    };
-    const handleSucessoInscricao = () => carregar();
-
-    // Mapeamento de dados para o card
-    const mapToCardInfo = (t: any) => {
-        const dt = t.data_inicio ? new Date(t.data_inicio) : null;
-        return {
-            title:
-                t.status === "Em Andamento"
-                    ? "Em andamento"
-                    : t.status === "Finalizado"
-                        ? "Concluído"
-                        : isLoja
-                            ? "Aberto"
-                            : "Inscrito",
-            name: t.nome ?? "Torneio",
-            date: dt ? dt.toLocaleDateString() : "",
-            time: dt ? dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
-            location: t.loja_nome ?? "loja",
-            price: t.inscricao_gratuita
-                ? "Gratuita"
-                : t.valor_inscricao
-                    ? `R$ ${String(t.valor_inscricao).replace(".", ",")}`
-                    : "—",
-
-            ...(isLoja ? {players: Number(t.qnt_inscritos ?? t.inscritos ?? 0) } : {}),
-            tournamentId: t.id,
-
-        };
-    };
-
-    // Renderizacao de acoes (botoes)
-    const renderActionFor = (t: any) => {
-        // passa a mostrar ações somente na ABA "inscritos" (Abertos)
-        if (aba !== "inscritos") return null;
-
-        const tid = Number(t.id);
-
-        // Se for LOJA, mostrar botao de inscrever jogador
-        if (isLoja) {
-            return (
-                 <div onClick={(e) => e.stopPropagation()}> {/* Div que para a propagação */}
-                <Button
-                    label="+ Inscrever Jogador"
-                    onClick={() => {
-                        handleAbrirModalInscricao(tid, t.nome);
-                    }}
-                    backgroundColor="var(--var-cor-primaria)"
-                    textColor="var(--var-cor-branca)"
-                    className={styles.btnInscrever}
-                />
-            </div>
-            );
-        }
-
-        // Se for JOGADOR, mostrar botao Desinscrever-se
-        return (
-            <Button
-                label={loadingAcao[tid] ? "Desinscrevendo..." : "Desinscrever-se"}
-                onClick={() => {
-                    onUnsubscribe(tid, t.nome);
-                }}
-                disabled={!!loadingAcao[tid]}
-                backgroundColor="var(--var-cor-primaria)"
-                textColor="var(--var-cor-branca)"
-                className={styles.btnDesinscrever}
-            />
-        );
-    };
-
-    return (
-        <div className={styles.container}>
-            <div className={styles.conteudo}>
-                <h1 className={styles.titulo}>{tituloPagina}</h1>
-                <p className={styles.subtitulo}>{subtituloPagina}</p>
-
-                {/* KPIs */}
-                <div className={styles.cardsContainer} role="tablist">
-                    <button
-                        type="button"
-                        className={styles.kpiBtn}
-                        role="tab"
-                        onClick={() => setAba("inscritos")}
-                        aria-selected={aba === "inscritos"}
-                    >
-                        <CardSuperior
-                            icon={FiUser}
-                            count={estatisticas.torneiosFuturos}
-                            label={isLoja ? "Seus Torneios" : "Torneios Inscritos"}
-                            className={styles.card}
-                            selected={aba === "inscritos"}
-                        />
-                    </button>
-
-                    <button
-                        type="button"
-                        className={styles.kpiBtn}
-                        role="tab"
-                        onClick={() => setAba("andamento")}
-                        aria-selected={aba === "andamento"}
-                    >
-                        <CardSuperior
-                            icon={FiStar}
-                            count={estatisticas.torneiosEmAndamento}
-                            label="Em Andamento"
-                            className={styles.card}
-                            selected={aba === "andamento"}
-                        />
-                    </button>
-
-                    <button
-                        type="button"
-                        className={styles.kpiBtn}
-                        role="tab"
-                        onClick={() => setAba("historico")}
-                        aria-selected={aba === "historico"}
-                    >
-                        <CardSuperior
-                            icon={FiCalendar}
-                            count={estatisticas.torneiosHistorico}
-                            label="Histórico"
-                            className={styles.card}
-                            selected={aba === "historico"}
-                        />
-                    </button>
-                </div>
-
-                {/* Lista */}
-                <section className={styles.secao} aria-live="polite">
-                    <h2 className={styles.secaoTitulo}>
-                        {aba === "inscritos"
-                            ? isLoja
-                                ? "Seus Torneios"
-                                : "Torneios Inscritos"
-                            : aba === "andamento"
-                                ? "Em Andamento"
-                                : "Histórico"}
-                    </h2>
-
-                    {carregando && <div className={styles.vazio}>Carregando…</div>}
-                    {!carregando && erro && <div className={styles.vazio}>{erro}</div>}
-
-                    {!carregando && !erro && (
-                        listaAtiva.length === 0 ? (
-                            <EmptyState aba={aba} />
-                        ) : (
-                            <div className={styles.lista}>
-                                {listaAtiva.map((t: any) => (
-                                    <CardInfoTorneio
-                                        key={t.id}
-                                        {...mapToCardInfo(t)}
-                                        hidePlayers={!isLoja}
-                                        action={renderActionFor(t)}
-                                        onClick={() => handleCardClick(t.id)} // Passa a função de clique
-                                    />
-                                ))}
-                            </div>
-                        )
-                    )}
-                </section>
-            </div>
-
-            {/* Modal de inscrição de jogador */}
-            {modalAberto && torneioSelecionado && (
-                <ModalInscricaoJogador
-                    torneioId={torneioSelecionado.id}
-                    torneioNome={torneioSelecionado.nome}
-                    onClose={handleFecharModal}
-                    onSuccess={handleSucessoInscricao}
-                />
-            )}
+  const acaoDoCard = (torneio: ITorneio) => {
+    if (aba !== 'inscritos') return null;
+    if (ehLoja) {
+      return (
+        <div onClick={(e) => e.stopPropagation()}>
+          <Button
+            label="+ Inscrever Jogador"
+            onClick={() => setTorneioParaInscrever(torneio)}
+            backgroundColor="var(--var-cor-primaria)"
+            textColor="var(--var-cor-branca)"
+            className={styles.btnInscrever}
+          />
         </div>
+      );
+    }
+    return (
+      <div onClick={(e) => e.stopPropagation()}>
+        <Button
+          label={saindoDe === torneio.id ? 'Desinscrevendo...' : 'Desinscrever-se'}
+          onClick={() => sair(torneio)}
+          disabled={saindoDe === torneio.id}
+          backgroundColor="var(--var-cor-primaria)"
+          textColor="var(--var-cor-branca)"
+          className={styles.btnDesinscrever}
+        />
+      </div>
     );
+  };
+
+  const tituloDoCard = (torneio: ITorneio) => {
+    if (torneio.status === 'Em Andamento') return 'Em andamento';
+    if (torneio.status === 'Finalizado') return 'Concluído';
+    return ehLoja ? 'Aberto' : 'Inscrito';
+  };
+
+  const abas: { id: Aba; icone: typeof FiUser; rotulo: string }[] = [
+    { id: 'inscritos', icone: FiUser, rotulo: ehLoja ? 'Seus Torneios' : 'Torneios Inscritos' },
+    { id: 'andamento', icone: FiStar, rotulo: 'Em Andamento' },
+    { id: 'historico', icone: FiCalendar, rotulo: 'Histórico' },
+  ];
+
+  const renderizarLista = () => {
+    if (carregando) return <div className={styles.vazio}>Carregando…</div>;
+    if (erro) return <div className={styles.vazio}>{erro}</div>;
+    if (!listaAtiva.length) return <div className={styles.vazio}>{MENSAGEM_VAZIA[aba]}</div>;
+    return (
+      <div className={styles.lista}>
+        {listaAtiva.map((torneio) => (
+          <CardInfoTorneio
+            key={torneio.id}
+            title={tituloDoCard(torneio)}
+            name={torneio.nome}
+            date={formatarData(torneio.data_inicio)}
+            time={formatarHora(torneio.data_inicio)}
+            location={torneio.loja_nome}
+            price={formatarPreco(torneio.inscricao_gratuita, torneio.valor_inscricao)}
+            players={torneio.qnt_inscritos}
+            hidePlayers={!ehLoja}
+            tournamentId={torneio.id}
+            action={acaoDoCard(torneio)}
+            onClick={() => abrirTorneio(torneio)}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className={styles.container}>
+      <div className={styles.conteudo}>
+        <h1 className={styles.titulo}>{textos[aba].titulo}</h1>
+        <p className={styles.subtitulo}>{textos[aba].subtitulo}</p>
+
+        <div className={styles.cardsContainer} role="tablist">
+          {abas.map(({ id, icone, rotulo }) => (
+            <button
+              key={id}
+              type="button"
+              className={styles.kpiBtn}
+              role="tab"
+              onClick={() => setAba(id)}
+              aria-selected={aba === id}
+            >
+              <CardSuperior
+                icon={icone}
+                count={listas[id].length}
+                label={rotulo}
+                className={styles.card}
+                selected={aba === id}
+              />
+            </button>
+          ))}
+        </div>
+
+        <section className={styles.secao} aria-live="polite">
+          <h2 className={styles.secaoTitulo}>{abas.find((a) => a.id === aba)?.rotulo}</h2>
+          {renderizarLista()}
+        </section>
+      </div>
+
+      {torneioParaInscrever && (
+        <ModalInscricaoJogador
+          torneioId={torneioParaInscrever.id}
+          torneioNome={torneioParaInscrever.nome}
+          onClose={() => setTorneioParaInscrever(null)}
+          onSuccess={carregar}
+        />
+      )}
+    </div>
+  );
 };
 
 export default HistoricoTorneios;

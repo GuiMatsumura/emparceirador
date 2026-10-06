@@ -4,24 +4,13 @@ import estilos from "./styles.module.css";
 
 import Input from "../../../components/Input";
 import Button from "../../../components/Button";
-import { buscarTorneioPorId, tratarErroTorneio, inscreverNoTorneio } from "../../../services/torneioServico";
 import { useSessao } from "../../../contextos/AuthContexto";
+import { inscreverNoTorneio } from "../../../services/inscricaoServico";
+import { buscarTorneioPorId } from "../../../services/torneioServico";
 import type { ITorneio } from "../../../tipos/tipos";
-import Swal from 'sweetalert2';
-
-// Interface temporária para resolver problemas de tipo
-interface ITorneioCompleto extends ITorneio {
-  descricao?: string | null;
-  regras?: string | null;
-  banner?: string | null;
-  vagas_limitadas: boolean;
-  qnt_vagas?: number | null;
-  inscricao_gratuita: boolean;
-  valor_inscricao?: number | null;
-  data_inicio: string;
-  loja_nome: string;
-}
-
+import { alertarAviso, alertarErro, alertarSucesso, escaparHtml } from "../../../utils/alertas";
+import { mensagemDeErro } from "../../../utils/erros";
+import { formatarData, formatarHora, formatarPreco } from "../../../utils/formatacao";
 import { FaCalendarAlt, FaClock, FaStore, FaMoneyBillAlt } from "react-icons/fa";
 import { MdOutlinePeople } from "react-icons/md";
 
@@ -39,7 +28,7 @@ const InscricaoTorneio: React.FC = () => {
   const corLabelInputs = "#FFFFFF";
 
   // estados para dados do torneio
-  const [torneio, setTorneio] = useState<ITorneioCompleto | null>(null);
+  const [torneio, setTorneio] = useState<ITorneio | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -61,8 +50,7 @@ const InscricaoTorneio: React.FC = () => {
         setTorneio(dadosTorneio);
         setErro(null);
       } catch (error) {
-        console.error("Erro ao carregar torneio:", error);
-        setErro(tratarErroTorneio(error));
+        setErro(mensagemDeErro(error));
       } finally {
         setCarregando(false);
       }
@@ -76,24 +64,6 @@ const InscricaoTorneio: React.FC = () => {
     window.scrollTo(0, 0);
   }, []);
 
-  // funções auxiliares para formatação
-  const formatarData = (data: string) => {
-    return new Date(data).toLocaleDateString('pt-BR');
-  };
-
-  const formatarHora = (data: string) => {
-    return new Date(data).toLocaleTimeString('pt-BR', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-  };
-
-  const formatarValor = (valor?: number | null, gratuito?: boolean) => {
-    if (gratuito) return 'Gratuito';
-    if (!valor) return 'R$ 0,00';
-    return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  };
-
   const formatarRegras = (regras: string | null | undefined) => {
     if (!regras) return [];
     return regras.split('\n').filter(regra => regra.trim() !== '');
@@ -102,52 +72,28 @@ const InscricaoTorneio: React.FC = () => {
   // função de envio do formulário
   const enviarFormulario = async () => {
     if (!aceiteTermos) {
-      Swal.fire('Erro', 'É necessário aceitar os termos e condições do torneio.', 'error');
+      alertarAviso('Atenção', 'É necessário aceitar os termos e condições do torneio.');
       return;
     }
 
     if (!torneio || !id) {
-      Swal.fire('Erro', 'Torneio não encontrado.', 'error');
+      alertarAviso('Erro', 'Torneio não encontrado.');
       return;
     }
 
     if (!usuario) {
-      Swal.fire('Erro', 'Usuário não está logado.', 'error');
+      alertarAviso('Erro', 'Usuário não está logado.');
       return;
     }
 
     try {
       setEnviando(true);
       
-      const dadosInscricao = {
-        id_torneio: torneio.id,
-        decklist: deck.trim() || undefined, // só envia se não estiver vazio
-        id_usuario: usuario.id, // ID do usuário logado
-      };
-
-      await inscreverNoTorneio(dadosInscricao);
-      
-      // Sucesso
-      Swal.fire({
-        title: 'Sucesso!',
-        text: `Inscrição no torneio "${torneio.nome}" realizada com sucesso!`,
-        icon: 'success',
-        confirmButtonText: 'OK'
-      }).then(() => {
-        // Redirecionar para a tela inicial após sucesso
-        navigate('/');
-      });
-      
+      await inscreverNoTorneio({ id_torneio: torneio.id, decklist: deck.trim() });
+      await alertarSucesso('Sucesso!', `Inscrição no torneio "${escaparHtml(torneio.nome)}" realizada!`);
+      navigate('/');
     } catch (error) {
-      console.error("Erro ao inscrever no torneio:", error);
-      const mensagemErro = tratarErroTorneio(error);
-      
-      Swal.fire({
-        title: 'Erro ao inscrever no torneio',
-        text: mensagemErro,
-        icon: 'error',
-        confirmButtonText: 'OK'
-      });
+      alertarErro('Erro ao inscrever no torneio', error);
     } finally {
       setEnviando(false);
     }
@@ -220,7 +166,9 @@ const InscricaoTorneio: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2 className={estilos.nomeTorneio}>{torneio.nome}</h2>
                 <div className={estilos.jogadoresInscritos}>
-                    <MdOutlinePeople /> {torneio.qnt_vagas ? `${torneio.qnt_vagas} vagas` : 'Vagas ilimitadas'}
+                    <MdOutlinePeople /> {torneio.vagas_limitadas && torneio.qnt_vagas
+                      ? `${torneio.qnt_inscritos} de ${torneio.qnt_vagas} vagas preenchidas`
+                      : `${torneio.qnt_inscritos} inscritos (vagas ilimitadas)`}
                 </div>
             </div>
             
@@ -245,7 +193,7 @@ const InscricaoTorneio: React.FC = () => {
                   <FaStore /> <span>{torneio.loja_nome}</span>
                 </div>
                 <div className={estilos.itemInfo}>
-                  <FaMoneyBillAlt /> <span>{formatarValor(torneio.valor_inscricao, torneio.inscricao_gratuita)}</span>
+                  <FaMoneyBillAlt /> <span>{formatarPreco(torneio.inscricao_gratuita, torneio.valor_inscricao)}</span>
                 </div>
               </div>
             </div>

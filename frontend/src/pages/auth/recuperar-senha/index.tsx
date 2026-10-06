@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useSessao } from '../../../contextos/AuthContexto';
 import { solicitarTokenRecuperacaoSenha, validarTokenRecuperacao} from '../../../services/authServico';
-import Swal from 'sweetalert2';
+import { alertarErro } from '../../../utils/alertas';
 
 
 export default function PaginaRecuperarSenha() {
@@ -22,21 +22,13 @@ export default function PaginaRecuperarSenha() {
   e.preventDefault();
   setIsLoading(true);
 
-  let resposta;
   try {
-    resposta = await solicitarTokenRecuperacaoSenha(email);
-  } catch {
-    Swal.fire(
-      "Erro na Recuperação de Senha",
-      "Não foi possível enviar o Token de Recuperação para o email informado. Verifique o email.",
-      "error"
-    );
+    await solicitarTokenRecuperacaoSenha(email);
+    setEtapa("token");
+  } catch (erro) {
+    alertarErro("Erro na recuperação de senha", erro);
   } finally {
     setIsLoading(false);
-  }
-
-  if (resposta) {
-    setTimeout(() => setEtapa("token"), 0);
   }
 };
 
@@ -46,21 +38,13 @@ export default function PaginaRecuperarSenha() {
   e.preventDefault();
   setIsLoading(true);
 
-  let resposta;
   try {
-    resposta = await validarTokenRecuperacao(email, token);
-  } catch {
-    Swal.fire(
-      "Erro na Recuperação de Senha",
-      "Não foi possível enviar a Nova Senha utilizando o Token informado. Verifique o Token.",
-      "error"
-    );
+    await validarTokenRecuperacao(email, token);
+    setEtapa("finalizado");
+  } catch (erro) {
+    alertarErro("Erro na recuperação de senha", erro);
   } finally {
     setIsLoading(false);
-  }
-
-  if (resposta) {
-    setTimeout(() => setEtapa("finalizado"), 0);
   }
 };
 

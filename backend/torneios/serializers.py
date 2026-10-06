@@ -13,12 +13,20 @@ class TorneioSerializer(serializers.ModelSerializer):
     loja_nome = serializers.CharField(source='id_loja.username', read_only=True)
     loja_email = serializers.CharField(source='id_loja.email', read_only=True)
     loja_tipo = serializers.CharField(source='id_loja.tipo', read_only=True)
+    qnt_inscritos = serializers.SerializerMethodField(help_text='Inscrições ativas.')
 
     class Meta:
         model = Torneio
         fields = '__all__'
-        # O status só muda pelas ações do torneio (iniciar, cancelar, finalizar...)
-        read_only_fields = ['status']
+        # O status só muda pelas ações do torneio (iniciar, cancelar, finalizar...);
+        # o dono é sempre quem criou o torneio.
+        read_only_fields = ['status', 'id_loja']
+
+    def get_qnt_inscritos(self, torneio) -> int:
+        # Vem anotado pelo queryset da listagem; senão, conta.
+        if hasattr(torneio, 'qnt_inscritos'):
+            return torneio.qnt_inscritos
+        return Inscricao.objects.ativas().filter(id_torneio=torneio).count()
 
     def validate_data_inicio(self, value):
         """A data de início não pode estar no passado (só checada quando ela muda)."""

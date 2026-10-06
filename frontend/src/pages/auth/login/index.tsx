@@ -15,7 +15,7 @@ import { useSessao } from '../../../contextos/AuthContexto';
 import styles from './styles.module.css';
 import Input from '../../../components/Input';
 import Button from '../../../components/Button';
-import Swal from 'sweetalert2';
+import { alertarAviso } from '../../../utils/alertas';
 
 
 const PaginaLogin = () => {
@@ -32,64 +32,28 @@ const PaginaLogin = () => {
   const corBackgroundInputs = "#FFFFFF";
 
 
-  // Tenta obter a rota de origem de onde o utilizador foi redirecionado.
-  const deOndeVeio = location.state?.from?.pathname || '/';
+  // Página que exigiu login (RotaSegura ou card de torneio guardam em location.state.from).
+  const deOndeVeio: string = location.state?.from?.pathname || '/';
 
-  // Redireciona o utilizador assim que o estado 'usuario' é atualizado.
+  // Assim que o login (ou a sessão existente) define o usuário, volta para a página de origem.
   useEffect(() => {
-  if (usuario) {
-    const redirecionarUsuario = () => {
-        navigate("/");
-      // switch (tipo) {
-      //   case "LOJA":
-      //     navigate("/loja");
-      //     break;
-      //   case "JOGADOR":
-      //     navigate("/jogador");
-      //     break;
-      //   case "ADMIN":
-      //     navigate("/admin");
-      //     break;
-      //   default:
-      //     navigate("/");
-      // }
-    };
+    if (usuario) navigate(deOndeVeio, { replace: true });
+  }, [usuario, deOndeVeio, navigate]);
 
-    // Verificar se há redirecionamento salvo no localStorage
-    const redirectAfterLogin = localStorage.getItem('redirectAfterLogin');
-    
-    if (redirectAfterLogin) {
-      // Limpar o redirecionamento do localStorage
-      localStorage.removeItem('redirectAfterLogin');
-      // Redirecionar para a página de inscrição
-      navigate(redirectAfterLogin, { replace: true });
-    } else if (!deOndeVeio || deOndeVeio === "/") {
-      redirecionarUsuario();
-    } else {
-      navigate(deOndeVeio, { replace: true });
-    }
-  }
-}, [usuario, deOndeVeio, navigate]);
-
-  
   // Função executada quando o formulário é submetido.
   const handleSubmit = async (evento: FormEvent) => {
     evento.preventDefault();
     
     if (!email || !senha) {
-      Swal.fire(
-                  'Erro no Login',
-                  'Prencha todos os campos.',
-                  'error'
-                  );
+      alertarAviso('Erro no login', 'Preencha todos os campos.');
       return;
     }
 
     try {
       setLoading(true);
       await login({ email, password: senha });
-    } catch (error) {
-      console.error("Falha na tentativa de login:", error);
+    } catch {
+      // O alerta de erro já é exibido pelo AuthContexto.
     } finally {
         setLoading(false);
     }

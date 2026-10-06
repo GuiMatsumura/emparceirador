@@ -1,189 +1,107 @@
-// components/MesaAtivaComponent.tsx
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { buscarMinhaMesaNaRodada, reportarResultadoMesa } from '../../../services/mesaServico';
-import { buscarTorneioPorId } from '../../../services/torneioServico';
-import type { IMesaAtiva, ITorneio } from '../../../tipos/tipos';
-import { useSessao } from '../../../contextos/AuthContexto';
-import styles from '../styles.module.css';
-import Swal from 'sweetalert2';
-import { CardSuperior } from '../../../components/CardSuperior';
-import Input from '../../../components/Input';
+import { useCallback, useEffect, useState } from 'react';
+import { BsGrid3X3Gap } from 'react-icons/bs';
+import { GiPodium } from 'react-icons/gi';
+
 import Button from '../../../components/Button';
 import CardRanking from '../../../components/CardRanking';
 import RegrasPartida from '../../../components/CardRegrasPartida';
-import { BsGrid3X3Gap } from 'react-icons/bs';
-import { GiPodium } from 'react-icons/gi';
+import { CardSuperior } from '../../../components/CardSuperior';
+import Input from '../../../components/Input';
+import { useSessao } from '../../../contextos/AuthContexto';
+import { useIntervalo } from '../../../hooks/useIntervalo';
+import { buscarMinhaMesaNaRodada, reportarResultadoMesa } from '../../../services/mesaServico';
+import { buscarTorneioPorId } from '../../../services/torneioServico';
+import type { IMesaAtiva, ITorneio } from '../../../tipos/tipos';
+import { alertarAviso, alertarErro, alertarSucesso, avisoRapido } from '../../../utils/alertas';
+import styles from '../styles.module.css';
+
+const INTERVALO_ATUALIZACAO_MS = 30_000;
 
 interface MesaAtivaProps {
   rodadaId: number;
   torneioId: number;
-  onMesaFinalizada?: (mesa: IMesaAtiva) => void;
-  onVoltarParaIntervalo?: () => void;
+  /** Chamado quando o resultado foi enviado ou a rodada foi encerrada pela loja. */
+  onMesaFinalizada: () => void;
+  onVoltarParaIntervalo: () => void;
 }
 
-export default function MesaAtivaComponent({
-  rodadaId,
-  torneioId,
-  onMesaFinalizada,
-  onVoltarParaIntervalo
-}: MesaAtivaProps) {
-  const navigate = useNavigate();
+/** Mesa do jogador durante a rodada: disposição dos jogadores e envio do placar. */
+export default function MesaAtivaComponent({ rodadaId, torneioId, onMesaFinalizada, onVoltarParaIntervalo }: MesaAtivaProps) {
   const { usuario } = useSessao();
   const [mesa, setMesa] = useState<IMesaAtiva | null>(null);
   const [torneio, setTorneio] = useState<ITorneio | null>(null);
   const [loading, setLoading] = useState(true);
   const [reportandoResultado, setReportandoResultado] = useState(false);
-  const [regras, setRegras] = useState<string>('');
   const [vitoriasSuaDupla, setVitoriasSuaDupla] = useState('');
   const [vitoriasOponentes, setVitoriasOponentes] = useState('');
-  const [ultimoStatus, setUltimoStatus] = useState<string>('');
 
-  // Função para verificar status (igual da sua implementação)
-  const verificarStatus = async () => {
-    try {
-      const mesaData = await buscarMinhaMesaNaRodada(rodadaId);
-      
-      if (mesaData) {
-        const statusAtual = `${mesaData.status_rodada}-${mesaData.time_vencedor}`;
-        
-        if (statusAtual !== ultimoStatus && ultimoStatus !== '') {
-          setMesa(mesaData);
-          setUltimoStatus(statusAtual);
-          
-          if (mesaData.status_rodada.toLowerCase() === 'finalizada') {
-            Swal.fire({
-              title: '🏁 Rodada Finalizada!',
-              text: 'A rodada foi finalizada pelo organizador',
-              icon: 'info',
-              confirmButtonText: 'Ver Resultado',
-              timer: 5000
-            }).then(() => {
-              onMesaFinalizada?.(mesaData);
-            });
-          } else {
-            Swal.fire({
-              title: '🔄 Status Atualizado!',
-              text: 'Houve uma atualização na sua mesa',
-              icon: 'success',
-              confirmButtonText: 'OK',
-              timer: 3000,
-              toast: true,
-              position: 'top-end',
-              showConfirmButton: false
-            });
-          }
-        }
-        
-        setUltimoStatus(statusAtual);
-      }
-    } catch (error) {
-      console.error('Erro ao verificar status:', error);
+  const carregarMesa = useCallback(async () => {
+    const dados = await buscarMinhaMesaNaRodada(rodadaId);
+    // Sem mesa (bye) ou rodada já encerrada: não há o que fazer aqui
+    if (!dados || dados.status_rodada === 'Finalizada') {
+      onMesaFinalizada();
+      return null;
     }
-  };
+    setMesa(dados);
+    return dados;
+  }, [rodadaId, onMesaFinalizada]);
 
-  // Webhook simplificado
   useEffect(() => {
-    const interval = setInterval(verificarStatus, 30000);
-    return () => clearInterval(interval);
-  }, [rodadaId, ultimoStatus]);
-
-  // Carregar mesa
-  useEffect(() => {
-    const carregarMesa = async () => {
+    const iniciar = async () => {
       try {
-        setLoading(true);
-        const mesaData = await buscarMinhaMesaNaRodada(rodadaId);
-
-        // Se estiver no bye, chama callback para voltar ao intervalo
-        if (!mesaData) {
-          onVoltarParaIntervalo?.();
-          return;
+        const [dados, dadosTorneio] = await Promise.all([carregarMesa(), buscarTorneioPorId(torneioId)]);
+        setTorneio(dadosTorneio);
+        if (dados) {
+          const meu = dados.meu_time === 1 ? dados.pontuacao_time_1 : dados.pontuacao_time_2;
+          const deles = dados.meu_time === 1 ? dados.pontuacao_time_2 : dados.pontuacao_time_1;
+          setVitoriasSuaDupla(String(meu));
+          setVitoriasOponentes(String(deles));
         }
-
-        setMesa(mesaData);
-        setUltimoStatus(`${mesaData.status_rodada}-${mesaData.time_vencedor}`);
-
-        try {
-          const torneioData = await buscarTorneioPorId(torneioId);
-          setTorneio(torneioData);
-          setRegras(torneioData.regras || "");
-        } catch (error) {
-          console.error('Erro ao carregar torneio:', error);
-        }
-
-        // Se a mesa já está finalizada, chama callback
-        if (mesaData?.status_rodada.toLowerCase() === 'finalizada') {
-          onMesaFinalizada?.(mesaData);
-          return;
-        }
-
-        // Valores iniciais dos inputs
-        if (mesaData.meu_time === 1) {
-          setVitoriasSuaDupla(mesaData.pontuacao_time_1.toString());
-          setVitoriasOponentes(mesaData.pontuacao_time_2.toString());
-        } else {
-          setVitoriasSuaDupla(mesaData.pontuacao_time_2.toString());
-          setVitoriasOponentes(mesaData.pontuacao_time_1.toString());
-        }
-        
-      } catch (error) {
-        console.error('Erro ao carregar mesa:', error);
-        Swal.fire('Erro', 'Não foi possível carregar a mesa.', 'error');
-        onVoltarParaIntervalo?.();
+      } catch (erro) {
+        alertarErro('Não foi possível carregar a mesa', erro);
+        onVoltarParaIntervalo();
       } finally {
         setLoading(false);
       }
     };
+    iniciar();
+    // Carrega uma vez ao abrir a mesa; atualizações vêm do polling abaixo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rodadaId, torneioId]);
 
-    carregarMesa();
-  }, [rodadaId, torneioId, onMesaFinalizada, onVoltarParaIntervalo]);
+  // Se a loja encerrar a rodada enquanto o jogador está aqui, volta para o intervalo
+  useIntervalo(async () => {
+    try {
+      const dados = await buscarMinhaMesaNaRodada(rodadaId);
+      if (!dados || dados.status_rodada === 'Finalizada') {
+        avisoRapido('Rodada finalizada pelo organizador');
+        onMesaFinalizada();
+      } else if (mesa && dados.time_vencedor !== mesa.time_vencedor) {
+        setMesa(dados);
+        avisoRapido('O resultado da sua mesa foi atualizado');
+      }
+    } catch {
+      // Falha pontual no polling: tenta de novo no próximo ciclo
+    }
+  }, INTERVALO_ATUALIZACAO_MS);
 
   const handleReportarResultado = async () => {
     if (!mesa) return;
-
-    if (!vitoriasSuaDupla || !vitoriasOponentes) {
-      Swal.fire('Atenção', 'Preencha todas as pontuações', 'warning');
+    const nossas = parseInt(vitoriasSuaDupla, 10);
+    const deles = parseInt(vitoriasOponentes, 10);
+    if (Number.isNaN(nossas) || Number.isNaN(deles) || nossas < 0 || deles < 0) {
+      alertarAviso('Atenção', 'Informe o número de vitórias das duas duplas.');
       return;
     }
 
-    let pontuacaoTime1: number;
-    let pontuacaoTime2: number;
-
-    if (mesa.meu_time === 1) {
-      pontuacaoTime1 = parseInt(vitoriasSuaDupla);
-      pontuacaoTime2 = parseInt(vitoriasOponentes);
-    } else {
-      pontuacaoTime1 = parseInt(vitoriasOponentes);
-      pontuacaoTime2 = parseInt(vitoriasSuaDupla);
-    }
-
-    let timeVencedor: number;
-    if (pontuacaoTime1 > pontuacaoTime2) {
-      timeVencedor = 1;
-    } else if (pontuacaoTime2 > pontuacaoTime1) {
-      timeVencedor = 2;
-    } else {
-      timeVencedor = 0;
-    }
-
+    const [pontuacaoTime1, pontuacaoTime2] = mesa.meu_time === 1 ? [nossas, deles] : [deles, nossas];
     try {
       setReportandoResultado(true);
-      const mesaAtualizada = await reportarResultadoMesa(mesa.id, pontuacaoTime1, pontuacaoTime2, timeVencedor);
-
-      setMesa({
-        ...mesa,
-        pontuacao_time_1: pontuacaoTime1,
-        pontuacao_time_2: pontuacaoTime2,
-        time_vencedor: timeVencedor,
-        status_rodada: 'Finalizada'
-      });
-
-      await Swal.fire('Sucesso', 'Resultado reportado com sucesso!', 'success');
-      onMesaFinalizada?.(mesaAtualizada);
-    } catch (error) {
-      console.error('Erro ao reportar resultado:', error);
-      Swal.fire('Erro', 'Não foi possível reportar o resultado.', 'error');
+      await reportarResultadoMesa(mesa.id, pontuacaoTime1, pontuacaoTime2);
+      await alertarSucesso('Resultado reportado com sucesso!');
+      onMesaFinalizada();
+    } catch (erro) {
+      alertarErro('Não foi possível reportar o resultado', erro);
     } finally {
       setReportandoResultado(false);
     }
@@ -211,7 +129,7 @@ export default function MesaAtivaComponent({
       <div className={styles.header}>
         <div>
           <h1 className={styles.titulo}>
-            {mesa.numero_mesa === 0 ? 'Você recebeu um bye!' : 'Mesa Ativa'}
+            Mesa Ativa
           </h1>
           <p className={styles.subtitulo}>
             {mesa.nome_torneio}
@@ -225,7 +143,7 @@ export default function MesaAtivaComponent({
           {/* Cards Superiores */}
           <div className={styles.cardsEsquerda}>
             <CardSuperior
-              count={mesa.numero_mesa === 0 ? "BYE" : mesa.numero_mesa}
+              count={mesa.numero_mesa}
               label="Sua Mesa"
               icon={BsGrid3X3Gap}
               selected={false}
@@ -362,9 +280,7 @@ export default function MesaAtivaComponent({
           />
 
           {/* Regras da Partida */}
-          {regras && (
-            <RegrasPartida regras={regras} />
-          )}
+          {torneio?.regras && <RegrasPartida regras={torneio.regras} />}
         </div>
       </div>
     </div>

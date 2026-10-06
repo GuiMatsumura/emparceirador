@@ -3,8 +3,8 @@ import estilos from "./styles.module.css";
 import Input from "../Input";
 import Button from "../Button";
 import { cadastrarUsuario } from "../../services/authServico";
-import { inscreverNoTorneio } from "../../services/torneioServico";
-import Swal from 'sweetalert2';
+import { inscreverJogadorPorEmail, inscreverNoTorneio } from "../../services/inscricaoServico";
+import { alertarAviso, alertarErro, alertarSucesso, escaparHtml } from "../../utils/alertas";
 
 // Adicionar tipo de inscrição
 type TipoInscricao = 'novo' | 'existente';
@@ -43,14 +43,14 @@ const ModalInscricaoJogador: React.FC<ModalInscricaoJogadorProps> = ({
 
     // Validações
     if (!email || !username || !senha) {
-      Swal.fire('Erro', 'Preencha todos os campos obrigatórios.', 'error');
+      alertarAviso('Erro', 'Preencha todos os campos obrigatórios.');
       return;
     }
 
     // Validação de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      Swal.fire('Erro', 'Digite um email válido.', 'error');
+      alertarAviso('Erro', 'Digite um email válido.');
       return;
     }
 
@@ -71,26 +71,14 @@ const ModalInscricaoJogador: React.FC<ModalInscricaoJogadorProps> = ({
         id_usuario: novoUsuario.id
       });
 
-      // Sucesso
-      Swal.fire({
-        title: 'Sucesso!',
-        text: `Jogador "${username}" cadastrado e inscrito no torneio "${torneioNome}" com sucesso!`,
-        icon: 'success',
-        confirmButtonText: 'OK'
-      }).then(() => {
-        onSuccess();
-        onClose();
-      });
-
-    } catch (error: any) {
-      console.error("Erro ao cadastrar e inscrever jogador:", error);
-      const mensagemErro = error.message || 'Erro ao cadastrar e inscrever jogador. Tente novamente.';
-      Swal.fire({
-        title: 'Erro',
-        text: mensagemErro,
-        icon: 'error',
-        confirmButtonText: 'OK'
-      });
+      await alertarSucesso(
+        'Sucesso!',
+        `Jogador "${escaparHtml(username)}" cadastrado e inscrito no torneio "${escaparHtml(torneioNome)}".`,
+      );
+      onSuccess();
+      onClose();
+    } catch (error) {
+      alertarErro('Erro ao cadastrar e inscrever jogador', error);
     } finally {
       setCarregando(false);
     }
@@ -101,54 +89,27 @@ const ModalInscricaoJogador: React.FC<ModalInscricaoJogadorProps> = ({
 
     // Validações
     if (!email) {
-      Swal.fire('Erro', 'Preencha o email do jogador.', 'error');
+      alertarAviso('Erro', 'Preencha o email do jogador.');
       return;
     }
 
     // Validação de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      Swal.fire('Erro', 'Digite um email válido.', 'error');
+      alertarAviso('Erro', 'Digite um email válido.');
       return;
     }
 
     setCarregando(true);
 
     try {
-      // Inscrever jogador existente por email
-      const { inscreverJogadorPorEmail } = await import("../../services/torneioServico");
-      await inscreverJogadorPorEmail({
-        torneio_id: torneioId,
-        email: email
-      });
-
-      // Limpar campos
+      await inscreverJogadorPorEmail(torneioId, email);
       setEmail("");
-
-      // Sucesso
-      Swal.fire({
-        title: 'Sucesso!',
-        text: `Jogador inscrito no torneio "${torneioNome}" com sucesso!`,
-        icon: 'success',
-        confirmButtonText: 'OK'
-      }).then(() => {
-        onSuccess();
-        onClose();
-      });
-
-    } catch (error: any) {
-      console.error("Erro ao inscrever jogador:", error);
-
-      // Extrai o "detail" do backend se existir
-      const detail = error.response?.data?.detail;
-      const mensagemErro = detail || 'Serviço indisponível, tente novamente mais tarde.';
-
-      Swal.fire({
-        title: 'Erro',
-        text: mensagemErro,
-        icon: 'error',
-        confirmButtonText: 'OK'
-      });
+      await alertarSucesso('Sucesso!', `Jogador inscrito no torneio "${escaparHtml(torneioNome)}".`);
+      onSuccess();
+      onClose();
+    } catch (error) {
+      alertarErro('Erro ao inscrever jogador', error);
     } finally {
       setCarregando(false);
     }

@@ -5,7 +5,7 @@
 ### ✅ Implementado (2025-10-29):
 - ✅ Modelo `RankingParcial` (models.py:114-160)
 - ✅ Índices otimizados no banco de dados
-- ✅ Funções auxiliares com memoization (ranking_utils.py)
+- ✅ Funções auxiliares com memoization (ranking.py)
 - ✅ Cálculo de métricas: MW%, OMW%, PMW%, Balanço
 - ✅ Cálculo automático ao finalizar rodadas (views.py:429-436)
 - ✅ Cálculo automático ao finalizar torneio (views.py:592-613)
@@ -14,7 +14,7 @@
 
 ### 📁 Arquivos Principais:
 - `backend/torneios/models.py` - Modelo RankingParcial
-- `backend/torneios/ranking_utils.py` - Funções de cálculo otimizadas
+- `backend/torneios/ranking.py` - Funções de cálculo otimizadas
 - `backend/torneios/views.py` - Endpoints atualizados
 - `backend/torneios/migrations/0003_rankingparcial*.py` - Migration
 

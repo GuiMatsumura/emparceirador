@@ -203,7 +203,7 @@ Com byes excluídos, a ordem de desempate é:
 
 ### Função `calcular_metricas_jogador()`
 
-**Localização:** `backend/torneios/ranking_utils.py` (linhas 223-310)
+**Localização:** `backend/torneios/ranking.py`
 
 ```python
 # Pontos Totais - INCLUI bye
@@ -229,7 +229,7 @@ mw = max(mw, 0.01)  # Floor de 1%
 
 ### Função `calcular_mw_ajustado()`
 
-**Localização:** `backend/torneios/ranking_utils.py` (linhas 166-220)
+**Localização:** `backend/torneios/ranking.py`
 
 ```python
 for r in range(1, rodada_numero + 1):
@@ -317,7 +317,7 @@ Esta é uma mudança apenas na **lógica de cálculo**. O modelo `RankingParcial
 python manage.py shell
 
 from torneios.models import Torneio, RankingParcial
-from torneios.ranking_utils import calcular_e_salvar_ranking_parcial
+from torneios.ranking import calcular_e_salvar_ranking_parcial
 
 # Deletar cache antigo
 RankingParcial.objects.filter(id_torneio_id=<TORNEIO_ID>).delete()
@@ -332,7 +332,7 @@ calcular_e_salvar_ranking_parcial(torneio, <RODADA_NUMERO>)
 ## 📚 DOCUMENTAÇÃO RELACIONADA
 
 - **ALGORITMO_PAREAMENTO_2V2.md** - Documentação completa do algoritmo
-- **ranking_utils.py** - Código de implementação
+- **ranking.py** - Código de implementação
 - **GUIA_TESTES_BYE.md** - Guia detalhado de testes (próximo arquivo)
 
 ---
@@ -352,7 +352,7 @@ Em caso de dúvidas sobre o tratamento de byes:
 1. Consulte esta documentação
 2. Verifique os exemplos práticos acima
 3. Execute os testes do guia de testes
-4. Analise o código em `ranking_utils.py`
+4. Analise o código em `ranking.py`
 
 ---
 

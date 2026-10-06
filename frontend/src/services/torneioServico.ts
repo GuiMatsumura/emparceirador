@@ -1,855 +1,132 @@
 /**
- * Serviço de Torneio.
- *
- * Este arquivo funciona como o "motor" da nossa comunicação com torneios.
- * Ele contém todas as funções que fazem a comunicação direta com os endpoints
- * da API relacionados a torneios (CRUD completo).
- *
- * A principal característica deste serviço é que ele é "burro": ele não
- * sabe nada sobre o estado da aplicação, alertas ou gerenciamento de dados.
- * Sua única responsabilidade é fazer a requisição, e retornar os dados em
- * caso de sucesso ou um erro em caso de falha, que será tratado por quem o
- * chamou (componentes ou contextos).
+ * Torneios: consulta, criação/edição e ações do ciclo de vida (iniciar, avançar, finalizar, cancelar).
+ * Erros da API são propagados; use utils/erros.mensagemDeErro para exibi-los.
  */
-
+import type { IInscricao, IJogadorRanking, IRankingRodada, IRodada, ITorneio, ITorneioEntrada } from '../tipos/tipos';
 import api from './api';
-import type { 
-  ITorneio, 
-  ITorneioCriacao, 
-  ITorneioAtualizacao, 
-  IListaTorneios,
-  IInscricao,
-} from '../tipos/tipos';
-import { AxiosError } from "axios";
-import type { AxiosResponse } from "axios";
+import { listarInscricoes } from './inscricaoServico';
 
-/**
- * Busca todos os torneios com paginação e filtro opcional por status.
- * 
- * @param pagina - Número da página (opcional, padrão: 1)
- * @param limite - Quantidade de itens por página (opcional, padrão: 10)
- * @param status - Filtro opcional por status do torneio
- * @returns Lista paginada de torneios
- */
-export const buscarTorneios = async (
-  pagina: number = 1, 
-  limite: number = 10,
-): Promise<IListaTorneios> => {
-  const resposta = await api.get('/torneios/torneios/', {
-    params: {
-      page: pagina,
-      page_size: limite,
-    }
-  });
-  return resposta.data;
-};
+const URL = '/torneios/torneios/';
 
-/** Busca torneios por status com paginação.
- * 
- * @param pagina - Número da página (opcional, padrão: 1)
- * @param limite - Quantidade de itens por página (opcional, padrão: 10)
- * @param status - Status ou lista de status para filtrar
- * @returns Lista paginada de torneios filtrados por status
- * */
-export const buscarTorneiosPorStatus = async (
-  pagina: number = 1, 
-  limite: number = 10,
-  status?: string | string[]
-): Promise<IListaTorneios> => {
-  const resposta = await api.get('/torneios/torneios/', {
-    params: {
-      page: pagina,
-      page_size: limite,
-      status: Array.isArray(status) ? status.join(',') : status
-    }
-  });
-  return resposta.data;
-};
-
-/** Busca torneios com status Aberto ou Em Andamento.
- * **/
-export const buscarTorneiosAtivos = async (): Promise<IListaTorneios> => {
-  return buscarTorneiosPorStatus(1, 10, ['Aberto', 'Em Andamento']);
-};
-
-/**
- * Busca um torneio específico pelo ID.
- * 
- * @param id - ID do torneio
- * @returns Dados do torneio
- */
-export const buscarTorneioPorId = async (id: number): Promise<ITorneio> => {
-  const resposta = await api.get(`/torneios/torneios/${id}/`);
-  return resposta.data;
-};
-
-/**
- * Cria um novo torneio.
- * 
- * @param dadosTorneio - Dados do torneio a ser criado
- * @returns Dados do torneio criado
- */
-export const criarTorneio = async (dadosTorneio: ITorneioCriacao): Promise<ITorneio> => {
-  // Se há um arquivo de banner, usar FormData
-  if (dadosTorneio.banner) {
-    const formData = new FormData();
-    
-    // Adicionar todos os campos ao FormData
-    formData.append('nome', dadosTorneio.nome);
-    if (dadosTorneio.descricao) formData.append('descricao', dadosTorneio.descricao);
-    formData.append('status', dadosTorneio.status);
-    formData.append('regras', dadosTorneio.regras);
-    formData.append('banner', dadosTorneio.banner);
-    formData.append('vagas_limitadas', dadosTorneio.vagas_limitadas.toString());
-    if (dadosTorneio.qnt_vagas) formData.append('qnt_vagas', dadosTorneio.qnt_vagas.toString());
-    formData.append('inscricao_gratuita', dadosTorneio.inscricao_gratuita.toString());
-    if (dadosTorneio.valor_inscricao) formData.append('valor_inscricao', dadosTorneio.valor_inscricao.toString());
-    formData.append('pontuacao_vitoria', dadosTorneio.pontuacao_vitoria.toString());
-    formData.append('pontuacao_derrota', dadosTorneio.pontuacao_derrota.toString());
-    formData.append('pontuacao_empate', dadosTorneio.pontuacao_empate.toString());
-    formData.append('pontuacao_bye', dadosTorneio.pontuacao_bye.toString());
-    if (dadosTorneio.quantidade_rodadas) formData.append('quantidade_rodadas', dadosTorneio.quantidade_rodadas.toString());
-    formData.append('data_inicio', dadosTorneio.data_inicio);
-    formData.append('id_loja', dadosTorneio.id_loja.toString());
-
-    const resposta = await api.post('/torneios/torneios/', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return resposta.data;
-  } else {
-    // Se não há arquivo, enviar como JSON normal
-    const resposta = await api.post('/torneios/torneios/', dadosTorneio);
-    return resposta.data;
-  }
-};
-
-/**
- * Atualiza um torneio existente.
- * 
- * @param id - ID do torneio a ser atualizado
- * @param dadosTorneio - Novos dados do torneio
- * @returns Dados do torneio atualizado
- */
-export const atualizarTorneio = async (
-  id: number, 
-  dadosTorneio: ITorneioAtualizacao
-): Promise<ITorneio> => {
-  const resposta = await api.put(`/torneios/torneios/${id}/`, dadosTorneio);
-  return resposta.data;
-};
-
-/**
- * Atualiza parcialmente um torneio existente (PATCH).
- * 
- * @param id - ID do torneio a ser atualizado
- * @param dadosTorneio - Dados parciais do torneio
- * @returns Dados do torneio atualizado
- */
-export const atualizarTorneioParcial = async (
-  id: number, 
-  dadosTorneio: Partial<ITorneioAtualizacao>
-): Promise<ITorneio> => {
-  const resposta = await api.patch(`/torneios/torneios/${id}/`, dadosTorneio);
-  return resposta.data;
-};
-
-/**
- * Remove um torneio.
- * 
- * @param id - ID do torneio a ser removido
- * @returns Confirmação da remoção
- */
-export const removerTorneio = async (id: number): Promise<void> => {
-  await api.delete(`/torneios/torneios/${id}/`);
-};
-
-
-/**
- * Busca torneios por loja.
- * 
- * @param idLoja - ID da loja
- * @param pagina - Número da página (opcional, padrão: 1)
- * @param limite - Quantidade de itens por página (opcional, padrão: 10)
- * @returns Lista paginada de torneios da loja
- */
-export const buscarTorneiosPorLoja = async (
-  idLoja: number,
-  pagina: number = 1, 
-  limite: number = 10
-): Promise<IListaTorneios> => {
-  const resposta = await api.get('/torneios/torneios/', {
-    params: {
-      id_loja: idLoja,
-      page: pagina,
-      page_size: limite
-    }
-  });
-  return resposta.data;
-};
-
-/**
- * Busca torneios com filtros combinados.
- * 
- * @param filtros - Objeto com filtros opcionais
- * @param pagina - Número da página (opcional, padrão: 1)
- * @param limite - Quantidade de itens por página (opcional, padrão: 10)
- * @returns Lista paginada de torneios filtrados
- */
-export const buscarTorneiosComFiltros = async (
-  filtros: {
-    status?: string;
-    id_loja?: number;
-    data_inicio?: string;
-    data_fim?: string;
-    nome?: string;
-  },
-  pagina: number = 1, 
-  limite: number = 10
-): Promise<IListaTorneios> => {
-  const resposta = await api.get('/torneios/torneios/', {
-    params: {
-      ...filtros,
-      page: pagina,
-      page_size: limite
-    }
-  });
-  return resposta.data;
-};
-
-/**
- * Inscreve um usuário em um torneio.
- * 
- * @param dadosInscricao - Dados da inscrição
- * @returns Confirmação da inscrição
- */
-export const inscreverNoTorneio = async (dadosInscricao: {
-  id_torneio: number;
-  decklist?: string;
-  id_usuario?: number;
-}): Promise<{ message: string }> => {
-  const resposta = await api.post('/torneios/inscricoes/', dadosInscricao);
-  return resposta.data;
-};
-
-/**
- * Busca os jogadores inscritos em um torneio específico.
- *
- * @param idTorneio - ID do torneio
- * @returns Lista de nomes dos jogadores inscritos
- */
-export const buscarJogadoresInscritos = async (idTorneio: number): Promise<string[]> => {
-  const resposta = await api.get('/torneios/inscricoes/', {
-    params: {
-      id_torneio: idTorneio
-    }
-  });
-  const inscricoes = resposta.data.results || resposta.data;
-  return inscricoes.map((inscricao: any) => inscricao.username);
-};
-
-/**
- * Busca todas as inscrições ativas de um torneio específico.
- *
- * @param idTorneio
- * @returns
- */
-export const buscarInscricoesAtivasCompletas = async (idTorneio: number): Promise<{
-  id: number;
-  id_usuario: number;
-  username: string;
-  email: string;
-  id_torneio: number;
-  nome_torneio: string;
-  decklist?: string;
-  status: string;
-  data_inscricao: string;
-}[]> => {
-  const resposta = await api.get('/torneios/inscricoes/', {
-    params: {
-      id_torneio: idTorneio,
-      page_size: 200
-    }
-  });
-  const inscricoes = resposta.data.results || resposta.data;
-
-  // Filtrar apenas inscrições ativas
-  return inscricoes.filter((inscricao: any) => inscricao.status !== 'Cancelado');
-};
-export async function contarInscritosTorneio(idTorneio: number): Promise<number> {
-  try {
-    const lista = await buscarJogadoresInscritos(idTorneio);
-    return Array.isArray(lista) ? lista.length : 0;
-  } catch {
-    return 0;
-  }
+export async function buscarTorneios(status?: string[]): Promise<ITorneio[]> {
+  const params = status ? { status: status.join(',') } : undefined;
+  const { data } = await api.get<ITorneio[]>(URL, { params });
+  return data;
 }
 
+/** Torneios abertos ou em andamento (home). Para LOJA, a API já devolve só os dela. */
+export function buscarTorneiosAtivos(): Promise<ITorneio[]> {
+  return buscarTorneios(['Aberto', 'Em Andamento']);
+}
 
-/**
- * Inicia um torneio.
- * 
- * @param id - ID do torneio a ser iniciado
- * @returns Resposta da API com informações da rodada criada
- */
-export const iniciarTorneio = async (id: number): Promise<{
+export async function buscarTorneioPorId(id: number): Promise<ITorneio> {
+  const { data } = await api.get<ITorneio>(`${URL}${id}/`);
+  return data;
+}
+
+export async function criarTorneio(dados: ITorneioEntrada): Promise<ITorneio> {
+  const { data } = await api.post<ITorneio>(URL, dados);
+  return data;
+}
+
+export async function atualizarTorneio(id: number, dados: ITorneioEntrada): Promise<ITorneio> {
+  const { data } = await api.put<ITorneio>(`${URL}${id}/`, dados);
+  return data;
+}
+
+export interface RespostaIniciarTorneio {
   message: string;
-  rodada: any;
+  rodada: IRodada;
   mesas_criadas: number;
   total_jogadores: number;
-}> => {
-  const resposta = await api.post(`/torneios/torneios/${id}/iniciar/`);
-  return resposta.data;
-};
+}
 
-/**
- * Avança para a próxima rodada do torneio.
- * 
- * @param id - ID do torneio
- * @returns Resposta da API com informações da nova rodada criada
- */
-export const proximaRodadaTorneio = async (id: number): Promise<{
+export async function iniciarTorneio(id: number): Promise<RespostaIniciarTorneio> {
+  const { data } = await api.post<RespostaIniciarTorneio>(`${URL}${id}/iniciar/`);
+  return data;
+}
+
+export interface RespostaAvancarRodada {
   message: string;
-  rodada: any;
-  mesas_criadas: number;
-}> => {
-  const resposta = await api.post(`/torneios/torneios/${id}/proxima_rodada/`);
-  return resposta.data;
-};
-
-
-
-/**
- * Busca jogadores sobressalentes de uma rodada específica.
- */
-export async function buscarSobressalentes(rodadaId: number): Promise<{
-  id: number;
-  username: string;
-  email: string;
-}[]> {
-  try {
-    const resposta = await api.get(`/torneios/rodadas/${rodadaId}/sobressalentes/`);
-    return resposta.data;
-  } catch (error) {
-    console.error('Erro ao buscar sobressalentes:', error);
-    throw error;
-  }
+  rodada_anterior: IRodada;
+  nova_rodada: IRodada;
 }
 
-/**
- * Busca o ranking parcial (acumulado) até uma rodada específica.
- * 
- * @param idTorneio - ID do torneio
- * @param rodadaId - ID da rodada para calcular o ranking até ela
- * @returns Ranking com posição, nome do jogador e pontos acumulados
- */
-export const buscarRankingRodada = async (
-  idTorneio: number,
-  rodadaId: number
-): Promise<{
-  rodada_numero: number;
-  ranking: Array<{
-    posicao: number;
-    jogador_id: number;
-    jogador_nome: string;
-    pontos: number;
-  }>;
-}> => {
-  const resposta = await api.get(`/torneios/torneios/${idTorneio}/ranking_rodada/`, {
-    params: {
-      rodada_id: rodadaId
-    }
-  });
-  return resposta.data;
-};
-
-/**
- * Utilitário para tratar erros de torneio de forma consistente.
- *
- * @param erro - Erro do Axios
- * @returns Mensagem de erro amigável
- */
-export const tratarErroTorneio = (erro: unknown): string => {
-  if (erro instanceof AxiosError) {
-    if (erro.response?.status === 404) {
-      return 'Torneio não encontrado.';
-    }
-    if (erro.response?.status === 400) {
-      return 'Dados inválidos. Verifique as informações enviadas.';
-    }
-    if (erro.response?.status === 403) {
-      return 'Você não tem permissão para realizar esta ação.';
-    }
-    if (erro.response?.status === 500) {
-      return 'Erro interno do servidor. Tente novamente mais tarde.';
-    }
-    return erro.response?.data?.message || 'Erro desconhecido ao processar torneio.';
-  }
-  return 'Erro inesperado ao processar torneio.';
-};
-
-/** Busca TODAS as inscrições do jogador autenticado (via sessão). */
-export async function buscarInscricoes(): Promise<IInscricao[]> {
-  const { data } = await api.get("/torneios/inscricoes/");
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.results)) return data.results;
-  return [];
+/** Encerra a rodada em andamento e cria a próxima já emparelhada (fase de emparelhamento). */
+export async function avancarRodada(id: number): Promise<RespostaAvancarRodada> {
+  const { data } = await api.post<RespostaAvancarRodada>(`${URL}${id}/proxima_rodada/`);
+  return data;
 }
 
-/** Busca TODOS os torneios.
-export async function buscarTorneios(): Promise<ITorneio[]> {
-  const { data } = await api.get("/torneios/torneios/");
-  return Array.isArray(data) ? data : [];
-}
-*/
-
-/**
- * Utilitário: agrupa em Inscritos / Em Andamento / Histórico
- * cruzando as inscrições do jogador com a lista de torneios.
- */
-export async function buscarAgrupadoPorAba() {
-  const [inscricoes, torneiosResponse] = await Promise.all([
-    buscarInscricoes(),
-    buscarTorneios(), // retorna IListaTorneios (paginado)
-  ]);
-
-  // normaliza a lista de torneios vindos da API (paginado ou array)
-  const torneios: ITorneio[] = Array.isArray((torneiosResponse as any)?.results)
-      ? (torneiosResponse as any).results
-      : (Array.isArray(torneiosResponse as any)
-          ? (torneiosResponse as any)
-          : []);
-
-  // pega só os torneios que o jogador realmente está inscrito
-  const idsInscritos = new Set(inscricoes.map((i) => i.id_torneio));
-  const meusTorneios = torneios.filter((t) => idsInscritos.has(t.id));
-
-  // função pra normalizar o status vindo do backend
-  const norm = (s?: string) =>
-      (s ?? "")
-          .toString()
-          .trim()
-          .toLowerCase()
-          // alguns backends mandam "em_andamento", etc.
-          .replace(/[_\s]+/g, " ");
-
-  // regras de agrupamento:
-  const abertos = meusTorneios.filter(
-      (t) => ["aberto", "em aberto", "open"].includes(norm(t.status))
-  );
-
-  const andamento = meusTorneios.filter(
-      (t) =>
-          ["em andamento", "andamento", "running"].includes(norm(t.status))
-  );
-
-  const historico = meusTorneios.filter(
-      (t) =>
-          ["finalizado", "concluido", "concluído", "encerrado", "closed"].includes(
-              norm(t.status)
-          )
-  );
-
-  // devolvemos os 3 blocos claramente
-  return { abertos, andamento, historico };
-}
-
-
-/** Helper DRF: varre todas as páginas usando `next` (paginado ou array simples) */
-async function fetchAllPaginated<T>(path: string): Promise<T[]> {
-  let url: string | null = path;
-  let acc: T[] = [];
-  let opts: any = undefined;
-
-  while (url) {
-    const resp: AxiosResponse<any> = await api.get(url, opts);
-    const payload = resp.data;
-
-    if (Array.isArray(payload)) {
-      acc = acc.concat(payload as T[]);
-      break;
-    }
-
-    const results: T[] = Array.isArray(payload?.results) ? payload.results : [];
-    acc = acc.concat(results);
-
-    url = payload?.next ?? null;
-    // após a primeira página o `next` já embute os params
-    opts = undefined;
-  }
-
-  return acc;
-}
-
-/** (LOJA) Busca TODOS os torneios visíveis para a loja autenticada.
- *  O backend já restringe por loja logada em get_queryset, então não precisamos de ?id_loja=
- */
-export async function buscarTodosTorneiosDaLoja(): Promise<ITorneio[]> {
-  return fetchAllPaginated<ITorneio>("/torneios/torneios/");
-}
-
-/** (LOJA) Agrupa: “Seus Torneios” (abertos), “Em Andamento”, “Histórico” (finalizados) */
-export async function buscarAgrupadoPorAbaLoja() {
-  const torneios = await buscarTodosTorneiosDaLoja();
-  const norm = (s?: string) => (s ?? "").toString().trim().toLowerCase();
-
-  // tolera pequenas variações de texto vindas do backend
-  const isAberto     = (s?: string) => ["aberto", "em aberto", "open"].includes(norm(s));
-  const isAndamento  = (s?: string) => ["em andamento", "andamento", "running"].includes(norm(s));
-  const isFinalizado = (s?: string) => ["finalizado", "encerrado", "closed"].includes(norm(s));
-
-  const seus      = torneios.filter(t => isAberto(t.status));
-  const andamento = torneios.filter(t => isAndamento(t.status));
-  const historico = torneios.filter(t => isFinalizado(t.status));
-
-  return { seus, andamento, historico };
-}
-
-/** Extrai id do torneio a partir de várias formas de payload de inscrição. */
-function getTorneioIdFromInscricao(it: any): number | null {
-  if (!it) return null;
-  if (it.id_torneio) return Number(it.id_torneio);
-  if (it.torneio_id) return Number(it.torneio_id);
-  if (typeof it.torneio === "number") return Number(it.torneio);
-  if (it.torneio?.id) return Number(it.torneio.id);
-  return null;
-}
-
-/* Retorna TRUE se o usuário ainda está ativo no torneio.
-async function isInscricaoAtivaPara(torneioId: number): Promise<boolean> {
-  const { data } = await api.get("/torneios/inscricoes/", {
-    params: { id_torneio: torneioId, page: 1, page_size: 50 },
-    withCredentials: true,
-  });
-  const lista = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
-  return lista.some((it: any) => {
-    const tid = getTorneioIdFromInscricao(it);
-    const ativo = it?.ativo !== false;
-    return Number(tid) === Number(torneioId) && ativo;
-  });
-}
-*/
-
-/** Localiza a inscrição do usuário logado PARA aquele torneio. */
-export async function getMinhaInscricaoId(torneioId: number): Promise<number> {
-  const { data } = await api.get("/torneios/inscricoes/", {
-    params: { id_torneio: torneioId, page: 1, page_size: 50 },
-    withCredentials: true,
-  });
-  const lista = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
-  const cand = lista.find((it: any) => {
-    const tid = getTorneioIdFromInscricao(it);
-    const ativo = it?.ativo !== false;
-    return Number(tid) === Number(torneioId) && ativo;
-  });
-  if (!cand?.id) throw new Error("Não foi possível localizar sua inscrição ativa.");
-  return Number(cand.id);
-}
-
-/**
- * Funcionalidades para o novo sistema de emparelhamento de torneios
- */
-
-// Função para avançar rodada (novo fluxo)
-export const proximaRodadaNovo = async (idTorneio: number) => {
-  const response = await api.post(`torneios/torneios/${idTorneio}/proxima_rodada/`);
-  return response.data;
-};
-
-// Função para emparelhar jogadores automaticamente
-export const emparelharAutomatico = async (
-  idRodada: number,
-  tipo: 'random' | 'swiss'
-) => {
-  const response = await api.post(`torneios/rodadas/${idRodada}/emparelhar_automatico/`, {
-    tipo: tipo
-  });
-  return response.data;
-};
-
-// Função para iniciar rodada emparelhada
-export const iniciarRodada = async (
-  idRodada: number,
-  forcarInicio: boolean = false
-) => {
-  const response = await api.post(`torneios/rodadas/${idRodada}/iniciar_rodada/`, {
-    forcar_inicio: forcarInicio
-  });
-  return response.data;
-};
-
-// Função para re-emparelhar uma rodada já emparelhada
-export const reemparelharRodada = async (idRodada: number) => {
-  const response = await api.post(`torneios/rodadas/${idRodada}/reemparelhar/`);
-  return response.data;
-};
-
-// Função para editar emparelhamento manualmente
-export const editarEmparelhamentoManual = async (
-  idRodada: number,
-  jogadorId: number,
-  novaMesaId?: number,
-  novoTime?: 1 | 2
-) => {
-  const acao = novaMesaId ? 'mover_jogador_para_mesa' : 'alterar_time_jogador';
-
-  const data: any = {
-    acao: acao,
-    jogador_id: jogadorId
-  };
-
-  if (novaMesaId) {
-    data.nova_mesa_id = novaMesaId;
-  }
-
-  if (novoTime) {
-    data.novo_time = novoTime;
-  }
-
-  const response = await api.post(`/torneios/rodadas/${idRodada}/editar_emparelhamento/`, data);
-  return response.data;
-};
-
-// Função para  (mantém compatibilidade)
-export const finalizarTorneio = async (id: number): Promise<{
+export interface RespostaFinalizarTorneio {
   message: string;
-  ranking: Array<{
-    posicao: number;
-    jogador_id: number;
-    jogador_nome: string;
-    pontos: number;
-  }>;
+  ranking: IJogadorRanking[];
   total_rodadas: number;
-}> => {
-  const resposta = await api.post(`/torneios/torneios/${id}/finalizar/`);
-  return resposta.data;
-};
+}
 
-/**
- * Cancela um torneio (marcando como cancelado, mantendo histórico)
- *
- * @param id - ID do torneio a ser cancelado
- * @returns Resposta da API com confirmação do cancelamento
- */
-export const cancelarTorneio = async (id: number): Promise<{
-  message: string;
-  torneio: ITorneio;
-}> => {
-  const resposta = await api.post(`/torneios/torneios/${id}/cancelar/`, {
-    confirmacao: true
+export async function finalizarTorneio(id: number): Promise<RespostaFinalizarTorneio> {
+  const { data } = await api.post<RespostaFinalizarTorneio>(`${URL}${id}/finalizar/`);
+  return data;
+}
+
+export async function cancelarTorneio(id: number): Promise<{ message: string; torneio: ITorneio }> {
+  const { data } = await api.post(`${URL}${id}/cancelar/`, { confirmacao: true });
+  return data;
+}
+
+/** Ranking acumulado até a rodada (com métricas de desempate se ela já terminou). */
+export async function buscarRankingRodada(idTorneio: number, rodadaId: number): Promise<IRankingRodada> {
+  const { data } = await api.get<IRankingRodada>(`${URL}${idTorneio}/ranking_rodada/`, {
+    params: { rodada_id: rodadaId },
   });
-  return resposta.data;
-};
-
-/**
- * Inscreve um jogador existente em um torneio usando apenas o email
- *
- * @param dadosInscricao - Dados da inscrição (torneio_id e email)
- * @returns Confirmação da inscrição
- */
-export const inscreverJogadorPorEmail = async (dadosInscricao: {
-  torneio_id: number;
-  email: string;
-}): Promise<{ message: string; inscricao: any }> => {
-  const resposta = await api.post('/torneios/inscricoes/inscrever_por_email/', dadosInscricao);
-  return resposta.data;
-};
-
-/**
- * Desinscreve o jogador de um torneio:
- * - Se torneio.status === 'Aberto'  -> HARD DELETE (linha some; pode reinscrever depois)
- * - Se torneio.status === 'Em Andamento' -> SOFT DELETE (status='Cancelado', registra saída)
- */
-export async function desinscreverDoTorneio(torneioId: number): Promise<void> {
-  // 1) Buscar status do torneio
-  const torneio = await buscarTorneioPorId(torneioId);
-  const inscricaoId = await getMinhaInscricaoId(torneioId);
-
-  if ((torneio?.status || '').toLowerCase() === 'aberto') {
-    // HARD DELETE (quando torneio status Aberto)
-    try {
-      await api.delete(`/torneios/inscricoes/${inscricaoId}/`, { withCredentials: true });
-      return;
-    } catch (err: any) {
-      const st = err?.response?.status;
-      if (st === 404 || st === 410) return; // já não existe -> trata como sucesso
-      // Como último recurso, tenta soft por compatibilidade (opcional)
-      try {
-        await api.post(`/torneios/inscricoes/${inscricaoId}/desinscrever/`, {}, { withCredentials: true });
-        return;
-      } catch (err2) {
-        throw err; // ver isso -- preserve o erro principal do DELETE
-      }
-    }
-  }
-
-  // SOFT DELETE (quando torneio status Em Andamento)
-  try {
-    await api.post(`/torneios/inscricoes/${inscricaoId}/desinscrever/`, {}, { withCredentials: true });
-    return;
-  } catch (err: any) {
-    // Verifica se já ficou inativo/cancelado no backend mesmo com erro
-    try {
-      const { data } = await api.get(`/torneios/inscricoes/${inscricaoId}/`, { withCredentials: true });
-      const ativo = data?.status && String(data.status).toLowerCase() !== 'cancelado';
-      if (!ativo) return; // já está cancelado -> sucesso
-    } catch {}
-    // fallback final: tenta DELETE (alguns backends tratam como remoção)
-    try {
-      await api.delete(`/torneios/inscricoes/${inscricaoId}/`, { withCredentials: true });
-      return;
-    } catch (err2: any) {
-      const st = err2?.response?.status;
-      if (st === 404 || st === 410) return; // já removido -> sucesso
-      throw err2;
-    }
-  }
+  return data;
 }
-/**
- * Usado pela LOJA no modal "Gerenciar Inscrições".
- * Remove um jogador específico do torneio.
- *
- * Regras:
- * - Se torneio.status === "Aberto"       -> HARD DELETE (DELETE inscrição)
- * - Se torneio.status === "Em Andamento" -> SOFT DELETE (POST .../desinscrever/)
- *
- * @param torneioId    ID do torneio
- * @param inscricaoId  ID da inscrição do jogador que será removido
- */
-export async function removerJogadorDoTorneioComoLoja(
-    torneioId: number,
-    inscricaoId: number
-): Promise<void> {
 
-  // 1) Buscar status do torneio
-  const torneio = await buscarTorneioPorId(torneioId);
+// ------------------------------------------------------------------------------
+// Agrupamentos da tela "Meus ingressos / Meus eventos"
+// ------------------------------------------------------------------------------
 
-  // Caso 1: torneio Aberto -> HARD DELETE
-  if ((torneio?.status || "").toLowerCase() === "aberto") {
-    try {
-      await api.delete(`/torneios/inscricoes/${inscricaoId}/`, {
-        withCredentials: true,
-      });
-      return;
-    } catch (err: any) {
-      const st = err?.response?.status;
-      if (st === 404 || st === 410) {
-        return;
-      }
-
-      // fallback opcional: tenta soft delete mesmo assim
-      try {
-        await api.post(
-            `/torneios/inscricoes/${inscricaoId}/desinscrever/`,
-            {},
-            { withCredentials: true }
-        );
-        return;
-      } catch (err2) {
-        throw err; // mantém o erro original do DELETE
-      }
-    }
-  }
-
-  // Caso 2: torneio Em Andamento (ou qualquer outro estado != Aberto) -> SOFT DELETE
-  try {
-    await api.post(
-        `/torneios/inscricoes/${inscricaoId}/desinscrever/`,
-        {},
-        { withCredentials: true }
-    );
-    return;
-  } catch (err: any) {
-
-    try {
-      const { data } = await api.get(
-          `/torneios/inscricoes/${inscricaoId}/`,
-          { withCredentials: true }
-      );
-
-      const aindaAtivo =
-          !!(data?.status &&
-              String(data.status).toLowerCase() !== "cancelado");
-
-      // se já está cancelado, consideramos sucesso
-      if (!aindaAtivo) return;
-    } catch (_) {
-    }
-
-    // fallback final: tenta DELETE como último recurso
-    try {
-      await api.delete(`/torneios/inscricoes/${inscricaoId}/`, {
-        withCredentials: true,
-      });
-      return;
-    } catch (err2: any) {
-      const st = err2?.response?.status;
-      if (st === 404 || st === 410) {
-        return;
-      }
-      throw err2;
-    }
-  }
+export interface TorneiosAgrupados {
+  abertos: ITorneio[];
+  andamento: ITorneio[];
+  historico: ITorneio[];
 }
-/**
- * Lista todos os jogadores inscritos em um torneio específico.
- * Retorna um array com as inscrições (usuário, email, status, etc).
- */
-export async function listarInscricoesDoTorneio(idTorneio: number) {
-  const resposta = await api.get("/torneios/inscricoes/", {
-    params: {
-      id_torneio: idTorneio,
-      page_size: 200, // ajuste conforme paginação do backend
-    },
-    withCredentials: true,
-  });
 
-  // A API pode retornar { results: [...] } ou um array direto
-  if (Array.isArray(resposta.data?.results)) {
-    return resposta.data.results;
-  }
-  if (Array.isArray(resposta.data)) {
-    return resposta.data;
-  }
-  return [];
+function agrupar(torneios: ITorneio[], abertos: ITorneio[]): TorneiosAgrupados {
+  return {
+    abertos,
+    andamento: torneios.filter((t) => t.status === 'Em Andamento'),
+    historico: torneios.filter((t) => t.status === 'Finalizado'),
+  };
+}
+
+/** LOJA: todos os torneios dela, separados por situação. */
+export async function agruparTorneiosDaLoja(): Promise<TorneiosAgrupados> {
+  const torneios = await buscarTorneios();
+  return agrupar(
+    torneios,
+    torneios.filter((t) => t.status === 'Aberto'),
+  );
 }
 
 /**
- * (LOJA) Reativa ou reinscreve um jogador no torneio Em Andamento.
- *
- * Cenário: Se a inscrição ainda existe, mas está Cancelado:
- *    tenta-se reativar via POST /torneios/inscricoes/{id}/reativar/
- *
- * IMPORTANTE:
- * Para recriar, precisamos saber o id_usuario desse jogador.
- * Então o front precisa armazenar também id_usuario na lista.
+ * JOGADOR: torneios em que ele se inscreveu.
+ * "Abertos" só considera inscrições ativas; andamento/histórico incluem quem saiu no meio.
  */
-export async function reativarJogadorNoTorneioComoLoja(
-    torneioId: number,
-    inscricaoId: number,
-    idUsuario?: number
-): Promise<void> {
-  try {
-    await api.post(
-        `/torneios/inscricoes/${inscricaoId}/reativar/`,
-        {},
-        { withCredentials: true }
-    );
-    return;
-  } catch (err: any) {
-    const st = err?.response?.status;
-    if (st !== 404 && st !== 410) {
-      // outro erro desconhecido -> falha
-      throw err;
-    }
-  }
-  await api.post(
-      `/torneios/inscricoes/`,
-      {
-        id_torneio: torneioId,
-        id_usuario: idUsuario,
-      },
-      { withCredentials: true }
+export async function agruparTorneiosDoJogador(): Promise<TorneiosAgrupados> {
+  const [inscricoes, listados] = await Promise.all([listarInscricoes(), buscarTorneios()]);
+  const porId = new Map(listados.map((t) => [t.id, t]));
+
+  // A listagem esconde torneios abertos já atrasados; busca esses individualmente.
+  const faltantes = inscricoes.filter((i) => !porId.has(i.id_torneio));
+  const extras = await Promise.all(faltantes.map((i) => buscarTorneioPorId(i.id_torneio)));
+  extras.forEach((t) => porId.set(t.id, t));
+
+  const ativos = new Set(inscricoes.filter((i: IInscricao) => i.status === 'Inscrito').map((i) => i.id_torneio));
+  const meus = inscricoes.map((i) => porId.get(i.id_torneio)).filter((t): t is ITorneio => Boolean(t));
+
+  return agrupar(
+    meus,
+    meus.filter((t) => t.status === 'Aberto' && ativos.has(t.id)),
   );
 }

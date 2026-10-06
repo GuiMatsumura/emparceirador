@@ -1,154 +1,40 @@
-// src/services/authServico.ts
-
 /**
- * Serviço de Autenticação.
- *
- * Este arquivo funciona como o "motor" da nossa autenticação. Ele contém
- * todas as funções que fazem a comunicação direta com os endpoints da API
- * relacionados a usuários e autenticação (login, logout, etc.).
- *
- * A principal característica deste serviço é que ele é "burro": ele não
- * sabe nada sobre o estado da aplicação, alertas ou gerenciamento de sessão.
- * Sua única responsabilidade é fazer a requisição, e retornar os dados em
- * caso de sucesso ou um erro em caso de falha, que será tratado por quem o
- * chamou (o nosso futuro AuthContexto).
+ * Autenticação e conta do usuário.
+ * Erros da API são propagados; use utils/erros.mensagemDeErro para exibi-los.
  */
-
+import type { ILoginCredenciais, IUsuario, IUsuarioCadastro } from '../tipos/tipos';
 import api from './api';
-import type { ILoginCredenciais, IUsuarioCadastro, IUsuario } from '../tipos/tipos';
-import { AxiosError } from "axios";
-/**
- * Envia as credenciais para a API para tentar autenticar o usuário.
- * A função é direta: se a chamada da API for bem-sucedida, retorna os dados.
- * Se falhar, o erro do Axios será propagado automaticamente para ser tratado.
- *
- * @param credenciais - Um objeto contendo o email e a senha do usuário.
- * @returns Os dados do usuário autenticado.
- */
-export const efetuarLogin = async (credenciais: ILoginCredenciais): Promise<IUsuario> => {
-  const resposta = await api.post('/auth/login/', credenciais);
-  // A API de login retorna um objeto com uma chave "dados" que contém o usuário.
-  return resposta.data.dados;
-};
 
-/**
- * Informa a API que o usuário deseja encerrar sua sessão.
- * Se a chamada falhar, o erro será propagado para ser tratado.
- */
-export const efetuarLogout = async (): Promise<void> => {
-  await api.post('/auth/logout/');
-};
-
-/**
- * Verifica com a API se existe uma sessão de usuário ativa,
- * buscando os dados do usuário logado através do cookie de sessão.
- * O endpoint /auth/validar-sessao/ foi criado especificamente para isso.
- *
- * @returns Os dados do usuário se a sessão for válida.
- */
-export const verificarSessao = async (): Promise<IUsuario> => {
-  const resposta = await api.get('/auth/validar-sessao/');
-  return resposta.data;
-};
-
-/**
- * Solicita a API o token de recuperação de senha do usuário
- * Se der certo, envia o token para o email do usuário.
- * Se a chamada falhar, o erro será propagado para ser tratado.
- */
-export const solicitarTokenRecuperacaoSenha = async (email: string): Promise<boolean> => {
-    const resposta = await api.post("/auth/requisitar-troca-senha/", { email });
-    
-    if (resposta.status === 200) {
-    return true;
-    } else {
-    return false;
-    }
+export async function efetuarLogin(credenciais: ILoginCredenciais): Promise<IUsuario> {
+  const { data } = await api.post<{ dados: IUsuario }>('/auth/login/', credenciais);
+  return data.dados;
 }
 
+export async function efetuarLogout(): Promise<void> {
+  await api.post('/auth/logout/');
+}
 
-/**
- * Envia para a API o token de recuperação para validação.
- * Se der certo, envia a nova senha para o email do usuário.
- * Se a chamada falhar, o erro será propagado para ser tratado.
- */
-export const validarTokenRecuperacao = async (email: string, token: string): Promise<boolean> => {
-  const resposta = await api.post('/auth/validar-token-redefinir-senha/', {"email": email, "token": token});
-  // A API de login retorna um objeto com uma chave "dados" que contém o usuário.
-  if (resposta.status === 200) {
-    return true;
-    } else {
-    return false;
-    }
-};
+/** Usuário da sessão atual, ou null se não há sessão (a API responde 204). */
+export async function verificarSessao(): Promise<IUsuario | null> {
+  const resposta = await api.get<IUsuario>('/auth/validar-sessao/');
+  return resposta.status === 200 ? resposta.data : null;
+}
 
-/**
- * Solicita a API um cadastro de usuário.
- * Se der certo, retorna os dados do usuário cadastrado.
- * Se a chamada falhar, identifica o erro.
- */
-// services/authServico.ts
-export const cadastrarUsuario = async (
-  usuario: IUsuarioCadastro
-): Promise<IUsuario> => {
-  try {
-    const resposta = await api.post("/auth/usuarios/", usuario);
-    return resposta.data;
-  } catch (erro) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const axiosErro = erro as AxiosError<any>;
+export async function cadastrarUsuario(usuario: IUsuarioCadastro): Promise<IUsuario> {
+  const { data } = await api.post<IUsuario>('/auth/usuarios/', usuario);
+  return data;
+}
 
-    if (axiosErro.response && axiosErro.response.data) {
-      const data = axiosErro.response.data;
+/** Envia por e-mail um token de redefinição de senha. */
+export async function solicitarTokenRecuperacaoSenha(email: string): Promise<void> {
+  await api.post('/auth/requisitar-troca-senha/', { email });
+}
 
-      // Monta uma lista com "campo: mensagem"
-      const mensagens: string[] = [];
+/** Valida o token; a nova senha é enviada por e-mail. */
+export async function validarTokenRecuperacao(email: string, token: string): Promise<void> {
+  await api.post('/auth/validar-token-redefinir-senha/', { email, token });
+}
 
-      Object.keys(data).forEach((campo) => {
-        const mensagensCampo = data[campo];
-        if (Array.isArray(mensagensCampo)) {
-          mensagensCampo.forEach((msg: string) => {
-            mensagens.push(`${campo}: ${msg}`);
-          });
-        } else if (typeof mensagensCampo === "string") {
-          mensagens.push(`${campo}: ${mensagensCampo}`);
-        }
-      });
-
-      // Se conseguiu extrair mensagens, lança todas unidas
-      if (mensagens.length > 0) {
-        throw new Error(mensagens.join("\n"));
-      }
-    }
-
-    throw new Error("Erro ao cadastrar usuário. Tente novamente.");
-  }
-};
-
-/**
- * Solicita a API a troca senha do usuário
- * Se der certo, altera a senha.
- * Se a chamada falhar, o erro será propagado para ser tratado.
- */
-// services/authServico.ts
-export const alterarSenhaUsuario = async (
-  userId: number,
-  senhaAntiga: string,
-  novaSenha: string
-): Promise<{ success: boolean; message: string }> => {
-  try {
-    const resposta = await api.post(`/auth/alterar-senha/${userId}/`, {
-      senha_antiga: senhaAntiga,
-      nova_senha: novaSenha,
-    });
-
-    return { success: true, message: resposta.data.message };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (error: any) {
-    if (error.response && error.response.data) {
-      const mensagens = Object.values(error.response.data).flat();
-      return { success: false, message: mensagens.join(" ") };
-    }
-    return { success: false, message: "Erro ao alterar senha." };
-  }
-};
+export async function alterarSenhaUsuario(userId: number, senhaAntiga: string, novaSenha: string): Promise<void> {
+  await api.post(`/auth/alterar-senha/${userId}/`, { senha_antiga: senhaAntiga, nova_senha: novaSenha });
+}

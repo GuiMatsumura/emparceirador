@@ -1,103 +1,53 @@
 /**
- * Serviço de Mesa
- *
- * Este arquivo contém funções para comunicação com endpoints da API
- * relacionados a mesas de jogo em torneios.
+ * Resultado das mesas.
  */
+import { isAxiosError } from 'axios';
 
+import type { IMesaAtiva, IMesaRodada, ResultadoMesa } from '../tipos/tipos';
 import api from './api';
-import type { IMesaAtiva, IRodada, IMesaRodada } from '../tipos/tipos';
 
-/**
- * Busca a mesa ativa do jogador em uma rodada específica.
- *
- * @param rodadaId - ID da rodada
- * @returns Os dados da mesa onde o jogador está alocado
- */
-export const buscarMinhaMesaNaRodada = async (rodadaId: number): Promise<IMesaAtiva | null> => {
-   try {
-  const resposta = await api.get(`/torneios/mesas/minha_mesa_na_rodada/`, {
-    params: { rodada_id: rodadaId }
-  });
-  return resposta.data;
- } catch (error: any) {
-    if (error.response?.status === 404) {
-      // 404 significa que não tem mesa (BYE)
-      return null;
-    }
-    throw error;
+const URL = '/torneios/mesas/';
+
+/** O vencedor é sempre derivado do placar (a API exige coerência entre os dois). */
+export function vencedorPeloPlacar(pontuacaoTime1: number, pontuacaoTime2: number): Exclude<ResultadoMesa, null> {
+  if (pontuacaoTime1 > pontuacaoTime2) return 1;
+  if (pontuacaoTime2 > pontuacaoTime1) return 2;
+  return 0;
+}
+
+/** Mesa do jogador logado na rodada, ou null se ele ficou de fora (bye). */
+export async function buscarMinhaMesaNaRodada(rodadaId: number): Promise<IMesaAtiva | null> {
+  try {
+    const { data } = await api.get<IMesaAtiva>(`${URL}minha_mesa_na_rodada/`, { params: { rodada_id: rodadaId } });
+    return data;
+  } catch (erro) {
+    if (isAxiosError(erro) && erro.response?.status === 404) return null;
+    throw erro;
   }
-};
+}
 
-/**
- * Reporta o resultado de uma mesa.
- *
- * @param mesaId - ID da mesa
- * @param pontuacaoTime1 - Pontuação do time 1
- * @param pontuacaoTime2 - Pontuação do time 2
- * @param timeVencedor - Time vencedor (0=Empate, 1=Time 1, 2=Time 2)
- * @returns Os dados da mesa atualizada
- */
-export const reportarResultadoMesa = async (
-  mesaId: number,
-  pontuacaoTime1: number,
-  pontuacaoTime2: number,
-  timeVencedor: number
-): Promise<IMesaAtiva> => {
-  const resposta = await api.post(`/torneios/mesas/${mesaId}/reportar_resultado/`, {
+function placar(pontuacaoTime1: number, pontuacaoTime2: number) {
+  return {
     pontuacao_time_1: pontuacaoTime1,
     pontuacao_time_2: pontuacaoTime2,
-    time_vencedor: timeVencedor
-  });
-  return resposta.data.mesa;
-};
+    time_vencedor: vencedorPeloPlacar(pontuacaoTime1, pontuacaoTime2),
+  };
+}
 
-/**
- * Busca todas as rodadas de um torneio.
- *
- * @param torneioId - ID do torneio
- * @returns Lista de rodadas do torneio
- */
-export const buscarRodadasDoTorneio = async (torneioId: number): Promise<IRodada[]> => {
-  const resposta = await api.get('/torneios/rodadas/', {
-    params: { torneio_id: torneioId }
-  });
-  return resposta.data.results || resposta.data;
-};
+/** Jogador da mesa reporta o placar (rodada em andamento). */
+export async function reportarResultadoMesa(mesaId: number, pontuacaoTime1: number, pontuacaoTime2: number) {
+  const { data } = await api.post<{ mesa: IMesaRodada }>(
+    `${URL}${mesaId}/reportar_resultado/`,
+    placar(pontuacaoTime1, pontuacaoTime2),
+  );
+  return data.mesa;
+}
 
-/**
- * Busca todas as mesas de uma rodada específica.
- *
- * @param rodadaId - ID da rodada
- * @returns Lista de mesas da rodada
- */
-export const buscarMesasDaRodada = async (rodadaId: number): Promise<IMesaRodada[]> => {
-  const resposta = await api.get('/torneios/mesas/', {
-    params: { rodada_id: rodadaId }
-  });
-  return resposta.data.results || resposta.data;
-};
-
-/**
- * Atualiza o resultado de uma mesa (usado pela LOJA).
- * Diferente de reportarResultadoMesa, este endpoint usa editar_manual e é exclusivo para loja/admin.
- *
- * @param mesaId - ID da mesa
- * @param pontuacaoTime1 - Pontuação do time 1
- * @param pontuacaoTime2 - Pontuação do time 2
- * @param timeVencedor - Time vencedor (0=Empate, 1=Time 1, 2=Time 2)
- * @returns Os dados da mesa atualizada
- */
-export const atualizarResultadoMesa = async (
-  mesaId: number,
-  pontuacaoTime1: number,
-  pontuacaoTime2: number,
-  timeVencedor: number
-): Promise<IMesaRodada> => {
-  const resposta = await api.patch(`/torneios/mesas/${mesaId}/editar_manual/`, {
-    pontuacao_time_1: pontuacaoTime1,
-    pontuacao_time_2: pontuacaoTime2,
-    time_vencedor: timeVencedor
-  });
-  return resposta.data.mesa;
-};
+/** Loja confirma/corrige o placar de uma mesa. */
+export async function editarResultadoMesa(mesaId: number, pontuacaoTime1: number, pontuacaoTime2: number) {
+  const { data } = await api.patch<{ mesa: IMesaRodada }>(
+    `${URL}${mesaId}/editar_manual/`,
+    placar(pontuacaoTime1, pontuacaoTime2),
+  );
+  return data.mesa;
+}

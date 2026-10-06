@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters import rest_framework as filters
@@ -12,7 +12,7 @@ from rest_framework.response import Response
 
 from .. import servicos
 from ..excecoes import RegraDeNegocio
-from ..models import Rodada, Torneio
+from ..models import Inscricao, Rodada, Torneio
 from ..permissoes import IsApenasLeitura, IsLojaOuAdmin
 from ..ranking import ranking_da_rodada
 from ..serializers import RodadaSerializer, TorneioSerializer
@@ -54,7 +54,8 @@ class TorneioViewSet(viewsets.ModelViewSet):
                     When(status=Torneio.Status.ABERTO, then=Value(2)),
                     default=Value(3),
                     output_field=IntegerField(),
-                )
+                ),
+                qnt_inscritos=Count('inscritos', filter=Q(inscritos__status=Inscricao.Status.INSCRITO)),
             )
             .order_by('prioridade', 'data_inicio')
         )
@@ -68,17 +69,7 @@ class TorneioViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        self._salvar_com_loja(serializer)
-
-    def perform_update(self, serializer):
-        self._salvar_com_loja(serializer)
-
-    def _salvar_com_loja(self, serializer):
-        """LOJA sempre fica como dona do próprio torneio; ADMIN informa id_loja."""
-        if self.request.user.tipo == 'LOJA':
-            serializer.save(id_loja=self.request.user)
-        else:
-            serializer.save()
+        serializer.save(id_loja=self.request.user)
 
     @swagger_auto_schema(
         request_body=openapi.Schema(

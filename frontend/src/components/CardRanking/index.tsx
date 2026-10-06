@@ -1,20 +1,20 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+
+import { buscarRodadasDoTorneio } from "../../services/rodadaServico";
 import { buscarRankingRodada } from "../../services/torneioServico";
+import type { IJogadorRanking } from "../../tipos/tipos";
 import styles from './styles.module.css';
-import { buscarRodadasDoTorneio } from "../../services/mesaServico";
-import type { IRodada, IJogadorRanking } from "../../tipos/tipos";
 
 interface RankingProps {
   tournamentId?: number;
+  /** Rodada até a qual o ranking é acumulado. Se omitida com isRankingFinal, usa a última rodada. */
   rodadaId?: number;
   isRankingFinal?: boolean;
   titulo?: string;
   subtitulo?: string;
   limite?: number;
   className?: string;
-  mostrarMetricasAvancadas?: boolean; // Nova prop para mostrar métricas detalhadas
-  onRankingCarregado?: (ranking: IJogadorRanking[]) => void;
-  onErro?: (erro: string) => void;
+  mostrarMetricasAvancadas?: boolean;
 }
 
 const CardRanking: React.FC<RankingProps> = ({
@@ -26,78 +26,44 @@ const CardRanking: React.FC<RankingProps> = ({
   limite,
   className = '',
   mostrarMetricasAvancadas = false,
-  onRankingCarregado,
-  onErro
 }) => {
   const [ranking, setRanking] = useState<IJogadorRanking[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [ultimaRodadaId, setUltimaRodadaId] = useState<number | null>(null);
 
-  // Buscar a última rodada para ranking final
-  const buscarUltimaRodada = async () => {
-    if (!tournamentId) return null;
-
-    try {
-      const rodadas = await buscarRodadasDoTorneio(tournamentId) as IRodada[];
-      if (rodadas.length > 0) {
-        const ultimaRodada = rodadas[rodadas.length - 1];
-        setUltimaRodadaId(ultimaRodada.id);
-        return ultimaRodada.id;
-      }
-      return null;
-    } catch (error) {
-      console.error('Erro ao buscar última rodada:', error);
-      return null;
-    }
-  };
-
-  const carregarRanking = async () => {
+  useEffect(() => {
     if (!tournamentId) {
       setRanking([]);
       return;
     }
+    // Evita que uma resposta antiga sobrescreva a da seleção atual
+    let ativo = true;
 
-    try {
+    const carregar = async () => {
       setCarregando(true);
       setErro(null);
-      
-      let rodadaIdParaBuscar = rodadaId;
-
-      // Se é ranking final, buscar a última rodada
-      if (isRankingFinal && !rodadaId) {
-        const ultimaRodadaId = await buscarUltimaRodada();
-        rodadaIdParaBuscar = ultimaRodadaId || undefined;
+      try {
+        let alvo = rodadaId;
+        if (!alvo && isRankingFinal) {
+          const rodadas = await buscarRodadasDoTorneio(tournamentId);
+          alvo = rodadas.at(-1)?.id;
+        }
+        const dados = alvo ? (await buscarRankingRodada(tournamentId, alvo)).ranking : [];
+        if (ativo) setRanking(dados);
+      } catch {
+        if (ativo) {
+          setErro('Erro ao carregar ranking');
+          setRanking([]);
+        }
+      } finally {
+        if (ativo) setCarregando(false);
       }
+    };
 
-      if (!rodadaIdParaBuscar) {
-        setRanking([]);
-        return;
-      }
-
-      const response = await buscarRankingRodada(tournamentId, rodadaIdParaBuscar);
-      const dadosRanking = response.ranking || [];
-      setRanking(dadosRanking);
-      
-      // Callback para notificar o componente pai
-      if (onRankingCarregado) {
-        onRankingCarregado(dadosRanking);
-      }
-    } catch (error: any) {
-      console.error('Erro ao carregar ranking:', error);
-      const mensagemErro = 'Erro ao carregar ranking';
-      setErro(mensagemErro);
-      if (onErro) {
-        onErro(mensagemErro);
-      }
-      setRanking([]);
-    } finally {
-      setCarregando(false);
-    }
-  };
-
-  useEffect(() => {
-    carregarRanking();
+    carregar();
+    return () => {
+      ativo = false;
+    };
   }, [tournamentId, rodadaId, isRankingFinal]);
 
   const getClassePosicao = (posicao: number) => {

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ITorneio } from "../../../tipos/tipos";
-import { buscarTorneioPorId, tratarErroTorneio } from "../../../services/torneioServico";
+import { buscarTorneioPorId } from "../../../services/torneioServico";
+import { mensagemDeErro } from "../../../utils/erros";
+import { formatarData, formatarHora, formatarPreco } from "../../../utils/formatacao";
 import styles from "./styles.module.css";
 import CardInfoTorneio from "../../../components/CardInfoTorneio";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -31,18 +33,12 @@ const InformacaoTorneio: React.FC = () => {
     const carregarTorneio = async () => {
       try {
         setLoading(true);
-        const torneioId = id ? parseInt(id) : 1;
-        console.log('InformacaoTorneio - Buscando torneio ID:', torneioId);
-        const [dadosTorneio] = await Promise.all([
-          buscarTorneioPorId(torneioId)
-        ]);
-        console.log('InformacaoTorneio - Torneio encontrado:', dadosTorneio);
+        const dadosTorneio = await buscarTorneioPorId(Number(id));
         setTorneio(dadosTorneio);
         setRegras(dadosTorneio.regras || "");
 
       } catch (e) {
-        console.error('InformacaoTorneio - Erro ao carregar torneio:', e);
-        setErro(tratarErroTorneio(e));
+        setErro(mensagemDeErro(e));
       } finally {
         setLoading(false);
       }
@@ -86,24 +82,11 @@ const InformacaoTorneio: React.FC = () => {
             className={styles.cardInfoTorneio}
             title="Informações do Torneio"
             name={torneio.nome}
-            date={new Date(torneio.data_inicio).toLocaleDateString("pt-BR")}
-            time={new Date(torneio.data_inicio).toLocaleTimeString("pt-BR", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            date={formatarData(torneio.data_inicio)}
+            time={formatarHora(torneio.data_inicio)}
             location={`Loja ${torneio.loja_nome}`}
-            price={
-              torneio.inscricao_gratuita
-                ? "Gratuito"
-                : torneio.valor_inscricao
-                  ? new Intl.NumberFormat("pt-BR", {
-                    style: "currency",
-                    currency: "BRL",
-                  }).format(torneio.valor_inscricao)
-                  : "Não informado"
-            }
-            hidePlayers
-            //players={torneio.qnt_vagas || 0}
+            price={formatarPreco(torneio.inscricao_gratuita, torneio.valor_inscricao)}
+            players={torneio.qnt_inscritos}
           />
           </div>
           <div className={styles.CardDescricao}>

@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FiChevronDown } from "react-icons/fi";
 import styles from './styles.module.css';
-import { buscarRodadasDoTorneio } from "../../services/mesaServico";
+import { buscarRodadasDoTorneio } from "../../services/rodadaServico";
 import type { IRodada } from "../../tipos/tipos";
 
 interface DropdownRodadasProps {
@@ -26,53 +26,38 @@ const DropdownRodadas: React.FC<DropdownRodadasProps> = ({
   const [dropdownAberto, setDropdownAberto] = useState(false);
   const [rodadas, setRodadas] = useState<IRodada[]>([]);
   const [carregando, setCarregando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [rodadaInicialSelecionada, setRodadaInicialSelecionada] = useState(false);
 
-  // Buscar rodadas do torneio
-  const carregarRodadas = async () => {
+  // Callbacks do pai em refs: a seleção automática roda só quando o torneio muda,
+  // mesmo que o pai recrie as funções a cada render.
+  const aoSelecionarRodada = useRef(onSelecionarRodada);
+  const aoSelecionarFinal = useRef(onSelecionarResultadoFinal);
+  useEffect(() => {
+    aoSelecionarRodada.current = onSelecionarRodada;
+    aoSelecionarFinal.current = onSelecionarResultadoFinal;
+  });
+
+  // Carrega as rodadas e seleciona automaticamente a última (ou o resultado final, se o torneio acabou)
+  useEffect(() => {
     if (!tournamentId) return;
-
-    try {
-      setCarregando(true);
-      setErro(null);
-      const rodadasData = await buscarRodadasDoTorneio(tournamentId);
-      setRodadas(rodadasData);
-      
-      // Selecionar automaticamente a última rodada ou resultado final
-      if (rodadasData.length > 0 && !rodadaSelecionada && !rodadaInicialSelecionada) {
-        
-        // Se o torneio está finalizado, seleciona resultado final automaticamente
-        if (tournamentStatus === "Finalizado" && onSelecionarResultadoFinal) {
-          onSelecionarResultadoFinal();
-        } 
-        // Caso contrário, seleciona a última rodada
-        else if (rodadasData.length > 0) {
-          const ultimaRodada = rodadasData[rodadasData.length - 1];
-          onSelecionarRodada(ultimaRodada);
+    let ativo = true;
+    setCarregando(true);
+    buscarRodadasDoTorneio(tournamentId)
+      .then((dados) => {
+        if (!ativo) return;
+        setRodadas(dados);
+        if (!dados.length) return;
+        if (tournamentStatus === 'Finalizado' && aoSelecionarFinal.current) {
+          aoSelecionarFinal.current();
+        } else {
+          aoSelecionarRodada.current(dados[dados.length - 1]);
         }
-        
-        setRodadaInicialSelecionada(true);
-      }
-    } catch (error: any) {
-      console.error('Erro ao carregar rodadas:', error);
-      setErro('Erro ao carregar rodadas');
-      setRodadas([]);
-    } finally {
-      setCarregando(false);
-    }
-  };
-
-  useEffect(() => {
-    if (tournamentId) {
-      carregarRodadas();
-    }
-  }, [tournamentId]);
-
-  // Resetar a flag quando o tournamentId mudar
-  useEffect(() => {
-    setRodadaInicialSelecionada(false);
-  }, [tournamentId]);
+      })
+      .catch(() => ativo && setRodadas([]))
+      .finally(() => ativo && setCarregando(false));
+    return () => {
+      ativo = false;
+    };
+  }, [tournamentId, tournamentStatus]);
 
   // Fechar dropdown ao clicar fora
   useEffect(() => {
@@ -91,19 +76,6 @@ const DropdownRodadas: React.FC<DropdownRodadasProps> = ({
       document.removeEventListener('click', handleClickFora);
     };
   }, [dropdownAberto]);
-
-  const formatarStatus = (status: string) => {
-    const statusMap: { [key: string]: string } = {
-      'Aguardando_Emparelhamento': 'Aguardando',
-      'Emparelhamento': 'Emparelhamento',
-      'Em Andamento': 'Em Andamento',
-      'Finalizada': 'Finalizada',
-      'em_andamento': 'Em Andamento',
-      'finalizada': 'Finalizada'
-    };
-    
-    return statusMap[status] || status;
-  };
 
   return (
     <div className={`${styles.dropdownContainer} ${className}`}>
@@ -143,7 +115,7 @@ const DropdownRodadas: React.FC<DropdownRodadasProps> = ({
             >
               <span>Rodada {rodada.numero_rodada}</span>
               <span className={styles.statusRodada}>
-                {formatarStatus(rodada.status)}
+                {rodada.status}
               </span>
             </div>
           ))}

@@ -286,6 +286,29 @@ class EdicaoTorneioTests(BaseTorneioTestCase):
         self.assertEqual(resposta.data['valor_inscricao'], '15.00')
 
 
+class TorneioListagemTests(BaseTorneioTestCase):
+    def test_informa_quantidade_de_inscritos_ativos(self):
+        jogadores = self.criar_jogadores(3)
+        Inscricao.objects.filter(id_usuario=jogadores[0]).update(status='Cancelado')
+        resposta = self.client.get(f'/api/v1/torneios/torneios/{self.torneio.id}/')
+        self.assertEqual(resposta.data['qnt_inscritos'], 2)
+
+    def test_quem_cria_e_o_dono(self):
+        self.client.force_authenticate(self.admin)
+        resposta = self.client.post(
+            '/api/v1/torneios/torneios/',
+            {
+                'nome': 'Do admin',
+                'regras': 'r',
+                'data_inicio': (timezone.now() + timedelta(days=1)).isoformat(),
+                'id_loja': self.loja.id,
+            },
+            format='json',
+        )
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        self.assertEqual(Torneio.objects.get(id=resposta.data['id']).id_loja_id, self.admin.id)
+
+
 class InscricaoTests(BaseTorneioTestCase):
     def test_jogador_so_edita_decklist_da_propria_inscricao(self):
         jogador = self.criar_jogadores(1)[0]
@@ -600,3 +623,17 @@ class RankingTests(BaseTorneioTestCase):
         pontos = {item['jogador_id']: item['pontos'] for item in ranking}
         self.assertEqual(pontos[e.id], self.torneio.pontuacao_bye)
         self.assertEqual(RankingParcial.objects.filter(id_torneio=self.torneio).count(), 5)
+
+
+class PopularExemploTests(APITestCase):
+    def test_cria_dados_de_exemplo_e_e_idempotente(self):
+        from django.core.management import call_command
+
+        call_command('popular_exemplo', verbosity=0)
+        call_command('popular_exemplo', verbosity=0)
+
+        self.assertTrue(Usuario.objects.filter(email='loja@exemplo.com', tipo='LOJA').exists())
+        self.assertEqual(Usuario.objects.filter(tipo='JOGADOR').count(), 9)
+        torneio = Torneio.objects.get(nome='Torneio de Exemplo')
+        self.assertEqual(Inscricao.objects.ativas().filter(id_torneio=torneio).count(), 9)
+        self.assertTrue(self.client.login(email='jogador1@exemplo.com', password='senha-exemplo-123'))

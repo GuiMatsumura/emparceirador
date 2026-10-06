@@ -1,62 +1,44 @@
-// src/routes/AppRoutes.tsx
+import { Route, Routes } from 'react-router-dom';
 
-import { Routes, Route } from "react-router-dom";
-import Layout from "../components/Layout";
-import PaginaLogin from "../pages/auth/login";
-import App from "../App";
-
-// Importa os nossos componentes de lógica de rota
-import { RotaSegura } from "./RotaSegura";
-import JogadorTeste from "../pages/Testes/JogadorTeste";
-import LojaTeste from "../pages/Testes/LojaTeste";
-import PaginaRecuperarSenha from "../pages/auth/recuperar-senha";
-import PaginaCadastrar from "../pages/auth/cadastrar";
-import PaginaAlterarSenha from "../pages/auth/alterar-senha";
-import InscricaoTorneio from "../pages/Torneio/inscrever";
-import CriarTorneio from "../pages/Torneio/criar";
-import HistoricoTorneios from "../pages/Torneio/historico";
-import TorneioRouter from "../pages/Torneio/TorneioRouter";
-import EmparelhamentoTorneio from "../pages/Torneio/emparelhamento";
-import Intervalo from "../pages/Mesa/intervalo";
+import App from '../App';
+import Layout from '../components/Layout';
+import Intervalo from '../pages/Mesa/intervalo';
+import PaginaAlterarSenha from '../pages/auth/alterar-senha';
+import PaginaCadastrar from '../pages/auth/cadastrar';
+import PaginaLogin from '../pages/auth/login';
+import PaginaRecuperarSenha from '../pages/auth/recuperar-senha';
+import TorneioRouter from '../pages/Torneio/TorneioRouter';
+import CriarTorneio from '../pages/Torneio/criar';
+import HistoricoTorneios from '../pages/Torneio/historico';
+import InscricaoTorneio from '../pages/Torneio/inscrever';
+import { RotaSegura } from './RotaSegura';
 
 export default function AppRoutes() {
   return (
     <Routes>
-      {/* --- Grupo 1: Rotas Públicas --- */}
-      {/*
-        Estas rotas são renderizadas sem nenhum Layout ou verificação de segurança.
-        Isto garante que a página de login não terá a Navbar da aplicação principal.
-      */}
+      {/* Públicas, sem layout (sem navbar) */}
       <Route path="/" element={<App />} />
       <Route path="/login/" element={<PaginaLogin />} />
       <Route path="/recuperar-senha/" element={<PaginaRecuperarSenha />} />
       <Route path="/cadastrar/" element={<PaginaCadastrar />} />
 
-
-      {/* --- Grupo 2: Rotas Protegidas com Layout --- */}
-      {/*
-        1. A RotaSegura é o elemento "pai" mais externo. A verificação de
-           segurança acontece ANTES de qualquer coisa visual ser renderizada (isso evita aquela rápida "piscadela" de conteúdo indevida).
-        2. Se o usuário estiver logado, a RotaSegura renderiza o <Outlet />, que neste
-           caso é o Layout.
-        3. O Layout renderiza a Navbar e o seu próprio <Outlet />, que
-           finalmente renderiza a página protegida (ex: App).
-      */}
+      {/* Exigem login */}
       <Route element={<RotaSegura />}>
         <Route element={<Layout />}>
-          <Route path="/jogador/" element={<JogadorTeste />} />
-          <Route path="/loja/" element={<LojaTeste />} />
-          <Route path="/admin/" element={<App />} />
           <Route path="/alterar-senha/" element={<PaginaAlterarSenha />} />
-          <Route path="/inscricao-torneio/:id" element={<InscricaoTorneio />} />
-          <Route path="/criar-evento/" element={<CriarTorneio />} />
           <Route path="/historico/" element={<HistoricoTorneios />} />
+          <Route path="/inscricao-torneio/:id" element={<InscricaoTorneio />} />
           <Route path="/torneios/:id" element={<TorneioRouter />} />
-          <Route path="/torneios/emparelhamento/" element={<EmparelhamentoTorneio/>} />
           <Route path="/intervalo/:id" element={<Intervalo />} />
         </Route>
       </Route>
 
+      {/* Exigem login de loja ou admin */}
+      <Route element={<RotaSegura tipos={['LOJA', 'ADMIN']} />}>
+        <Route element={<Layout />}>
+          <Route path="/criar-evento/" element={<CriarTorneio />} />
+        </Route>
+      </Route>
     </Routes>
   );
 }
