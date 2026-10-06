@@ -1,6 +1,23 @@
+from datetime import timedelta
+
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import Usuario
+
+# Tempo de validade do token de redefinição de senha
+VALIDADE_TOKEN_REDEFINIR_SENHA = timedelta(minutes=30)
+
+
+def validar_forca_senha(senha, usuario=None):
+    """Aplica os AUTH_PASSWORD_VALIDATORS do settings e converte o erro para o formato do DRF."""
+    try:
+        validate_password(senha, user=usuario)
+    except DjangoValidationError as erro:
+        raise serializers.ValidationError(list(erro.messages))
+    return senha
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -33,6 +50,23 @@ class UsuarioCreateSerializer(serializers.ModelSerializer):
             'password': {'write_only': True},
             'id': {'read_only': True}
         }
+
+    def validate_tipo(self, value):
+        """Cadastro público só cria JOGADOR ou LOJA. Apenas um ADMIN logado pode criar outro ADMIN."""
+        if value == Usuario.TipoUsuario.ADMIN:
+            request = self.context.get('request')
+            usuario_logado = getattr(request, 'user', None)
+            if not (usuario_logado and usuario_logado.is_authenticated and usuario_logado.tipo == 'ADMIN'):
+                raise serializers.ValidationError("Não é permitido criar usuários do tipo ADMIN.")
+        return value
+
+    def validate(self, data):
+        usuario_provisorio = Usuario(email=data.get('email'), username=data.get('username'))
+        try:
+            validar_forca_senha(data.get('password'), usuario_provisorio)
+        except serializers.ValidationError as erro:
+            raise serializers.ValidationError({'password': erro.detail})
+        return data
 
     def create(self, validated_data):
         """
@@ -67,7 +101,11 @@ class ValidarTokenRedefinirSenhaSerializer(serializers.Serializer):
         if not usuario:
             raise serializers.ValidationError("Usuário com este email não foi encontrado.")
 
-        if not usuario.token_redefinir_senha == token:
+        if not usuario.token_redefinir_senha or usuario.token_redefinir_senha != token:
+            raise serializers.ValidationError("Token inválido ou expirado.")
+
+        criado_em = usuario.token_redefinir_senha_criado_em
+        if not criado_em or timezone.now() - criado_em > VALIDADE_TOKEN_REDEFINIR_SENHA:
             raise serializers.ValidationError("Token inválido ou expirado.")
 
         return data
@@ -83,11 +121,15 @@ class AlterarSenhaSerializer(serializers.Serializer):
 
     def validate(self, data):
         """
-        Valida apenas se a nova senha é diferente da antiga.
-        Todas as outras validações são feitas no frontend.
+        Valida se a nova senha é diferente da antiga e se atende aos validadores de senha do Django.
+        O usuário dono da senha pode ser passado em context['usuario'] (melhora a checagem de similaridade).
         """
         if data['senha_antiga'] == data['nova_senha']:
             raise serializers.ValidationError("A nova senha não pode ser igual à senha antiga.")
+        try:
+            validar_forca_senha(data['nova_senha'], self.context.get('usuario'))
+        except serializers.ValidationError as erro:
+            raise serializers.ValidationError({'nova_senha': erro.detail})
         return data
 
 

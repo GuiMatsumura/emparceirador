@@ -117,7 +117,7 @@ class InscricaoCreateSerializer(serializers.ModelSerializer):
         
         # Verifica limite de vagas quando aplicável
         if value.vagas_limitadas and value.qnt_vagas is not None:
-            total_inscritos = Inscricao.objects.filter(id_torneio=value).count()
+            total_inscritos = Inscricao.objects.filter(id_torneio=value, status='Inscrito').count()
             if total_inscritos >= value.qnt_vagas:
                 raise serializers.ValidationError(
                     f"Limite de vagas atingido. Este torneio aceita apenas {value.qnt_vagas} jogadores."
@@ -199,7 +199,7 @@ class InscricaoLojaSerializer(serializers.ModelSerializer):
             
             # Verifica limite de vagas quando aplicável
             if torneio.vagas_limitadas and torneio.qnt_vagas is not None:
-                total_inscritos = Inscricao.objects.filter(id_torneio=torneio).count()
+                total_inscritos = Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').count()
                 if total_inscritos >= torneio.qnt_vagas:
                     raise serializers.ValidationError(
                         f"Limite de vagas atingido. Este torneio aceita apenas {torneio.qnt_vagas} jogadores."

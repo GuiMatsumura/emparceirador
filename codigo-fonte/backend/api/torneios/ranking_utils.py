@@ -122,25 +122,30 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> Dict
                 oponentes[j1][rodada.numero_rodada] = jogadores_time_1
                 oponentes[j2][rodada.numero_rodada] = jogadores_time_1
 
-    # Adicionar jogadores com bye (não estão em nenhuma mesa)
+    # Adicionar jogadores com bye (inscritos ativos que não estão em nenhuma mesa da rodada)
     jogadores_ativos = Inscricao.objects.filter(
         id_torneio=torneio,
         status='Inscrito'
-    ).values_list('id_usuario_id', flat=True)
+    ).values_list('id_usuario_id', 'data_inscricao')
 
-    for jogador_id in jogadores_ativos:
+    for jogador_id, data_inscricao in jogadores_ativos:
         if jogador_id not in pontos_por_rodada:
             pontos_por_rodada[jogador_id] = {}
             parceiros[jogador_id] = {}
             oponentes[jogador_id] = {}
 
-        # Adicionar byes
-        for r in range(1, rodada_numero + 1):
-            if r not in pontos_por_rodada[jogador_id]:
-                # Jogador teve bye nesta rodada
-                pontos_por_rodada[jogador_id][r] = torneio.pontuacao_bye
-                parceiros[jogador_id][r] = None
-                oponentes[jogador_id][r] = []
+        for rodada in rodadas:
+            r = rodada.numero_rodada
+            if r in pontos_por_rodada[jogador_id]:
+                continue
+            # Quem se inscreveu depois que a rodada começou não estava nela: não ganha bye retroativo.
+            # Rodadas antigas (sem data_inicio) mantêm o comportamento anterior.
+            if rodada.data_inicio and data_inscricao and data_inscricao > rodada.data_inicio:
+                continue
+            # Jogador teve bye nesta rodada
+            pontos_por_rodada[jogador_id][r] = torneio.pontuacao_bye
+            parceiros[jogador_id][r] = None
+            oponentes[jogador_id][r] = []
 
     # Otimização 2: Pré-calcular MW% base
     mw_base = {}

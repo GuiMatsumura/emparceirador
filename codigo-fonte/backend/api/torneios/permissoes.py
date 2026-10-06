@@ -94,7 +94,15 @@ class IsOwnerOrAdmin(BasePermission):
 
 
 class IsJogadorNaMesa(permissions.BasePermission):
-    """Permissão para jogadores que estão na mesa específica"""
+    """
+    Permissão para jogadores que estão na mesa específica.
+
+    ATENÇÃO: a verificação da mesa é feita em has_object_permission, então a view
+    precisa chamar self.check_object_permissions(request, mesa) (ou usar get_object()).
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
     def has_object_permission(self, request, view, obj):
         if not request.user.is_authenticated:
             return False
@@ -102,3 +110,32 @@ class IsJogadorNaMesa(permissions.BasePermission):
             id_mesa=obj,
             id_usuario=request.user
         ).exists()
+
+
+def torneio_do_objeto(obj):
+    """Retorna o Torneio ao qual um Torneio/Rodada/Mesa/Inscricao pertence."""
+    if hasattr(obj, 'id_loja'):  # Torneio
+        return obj
+    if hasattr(obj, 'id_rodada'):  # Mesa
+        return obj.id_rodada.id_torneio
+    return obj.id_torneio  # Rodada, Inscricao
+
+
+class IsDonoDoTorneioOuAdmin(BasePermission):
+    """
+    Em métodos de escrita, permite apenas o ADMIN ou a LOJA dona do torneio ao qual
+    o objeto (Torneio, Rodada, Mesa ou Inscricao) pertence. Leitura é liberada aqui
+    (as demais permissões da view decidem sobre leitura).
+    """
+
+    def has_permission(self, request, view):
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        if not request.user.is_authenticated:
+            return False
+        if request.user.tipo == 'ADMIN':
+            return True
+        return torneio_do_objeto(obj).id_loja_id == request.user.id

@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.crypto import get_random_string
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from drf_yasg.utils import swagger_auto_schema
@@ -133,7 +134,8 @@ class RequisitarTrocaSenhaView(APIView):
         # Gerar token simples
         token = get_random_string(length=16)
         usuario.token_redefinir_senha = token
-        usuario.save()
+        usuario.token_redefinir_senha_criado_em = timezone.now()
+        usuario.save(update_fields=['token_redefinir_senha', 'token_redefinir_senha_criado_em'])
 
         # Renderizar o HTML do email
         email_html = render_to_string(
@@ -183,6 +185,7 @@ class ValidarTokenRedefinirSenhaView(APIView):
         nova_senha = get_random_string(length=8)
         usuario.set_password(nova_senha)
         usuario.token_redefinir_senha = None  # Limpar o token após uso
+        usuario.token_redefinir_senha_criado_em = None
         usuario.save()
 
         # Renderizar o HTML do email
@@ -238,7 +241,7 @@ class AlterarSenhaView(APIView):
         self.check_object_permissions(request, usuario)
 
         # Valida dados
-        serializer = AlterarSenhaSerializer(data=request.data)
+        serializer = AlterarSenhaSerializer(data=request.data, context={'usuario': usuario})
         if not serializer.is_valid():
             return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
 

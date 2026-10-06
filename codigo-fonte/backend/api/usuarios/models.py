@@ -41,6 +41,12 @@ class Usuario(AbstractUser):
         help_text="Token usado na redefinição de senha (16 dígitos aleatórios)."
     )
 
+    token_redefinir_senha_criado_em = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Momento em que o token de redefinição foi gerado (usado para expirar o token)."
+    )
+
     # Definir o campo de username para email
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []

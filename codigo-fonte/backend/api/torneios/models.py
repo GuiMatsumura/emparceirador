@@ -66,7 +66,12 @@ class Rodada(models.Model):
     """
     id_torneio = models.ForeignKey(Torneio, on_delete=models.CASCADE, related_name='rodadas')
     numero_rodada = models.IntegerField()
-    status = models.CharField(max_length=50, default='Pendente', help_text="Ex: Pendente, Em Andamento, Finalizada")
+    status = models.CharField(max_length=50, default='Pendente', help_text="Ex: Emparelhamento, Em Andamento, Finalizada")
+    data_inicio = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Momento em que a rodada passou para 'Em Andamento'. Usado para saber quem estava inscrito "
+                  "na rodada (bye). Nulo em rodadas antigas."
+    )
 
     class Meta:
         unique_together = ('id_torneio', 'numero_rodada')
