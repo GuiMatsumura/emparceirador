@@ -1,9 +1,6 @@
 """
 Emparelhamento de jogadores em mesas 2v2.
 
-Centraliza a lógica que antes estava duplicada em várias views
-(iniciar, proxima_rodada, emparelhar_automatico, reemparelhar).
-
 - Aleatório: usado na Rodada 1 (ninguém tem pontos ainda).
 - Swiss: ordena por pontuação acumulada e forma grupos de 4 consecutivos.
   * Desempate de jogadores com a mesma pontuação é aleatório.
@@ -14,8 +11,8 @@ Centraliza a lógica que antes estava duplicada em várias views
 
 import random
 
-from .models import Inscricao, Mesa, MesaJogador, Rodada
-from .ranking_utils import construir_historico_ate_rodada
+from .models import Inscricao, Mesa, MesaJogador
+from .ranking import historico_anterior
 
 # Divisões possíveis de um grupo de 4 (índices no grupo ordenado), em ordem de preferência.
 DIVISOES_DUPLAS = [
@@ -25,13 +22,8 @@ DIVISOES_DUPLAS = [
 ]
 
 
-def inscricoes_ativas(torneio):
-    """Inscrições que participam do torneio. Fonte única do critério de 'jogador ativo'."""
-    return Inscricao.objects.filter(id_torneio=torneio, status='Inscrito')
-
-
 def jogadores_ativos_ids(torneio) -> list[int]:
-    return list(inscricoes_ativas(torneio).values_list('id_usuario_id', flat=True))
+    return list(Inscricao.objects.ativas().filter(id_torneio=torneio).values_list('id_usuario_id', flat=True))
 
 
 def limpar_mesas(rodada):
@@ -58,18 +50,6 @@ def emparelhar_aleatorio(rodada, jogadores: list[int]) -> int:
     return num_mesas
 
 
-def _historico_anterior(torneio, rodada) -> dict:
-    """Histórico das rodadas finalizadas antes da rodada informada."""
-    ultima = (
-        Rodada.objects.filter(id_torneio=torneio, numero_rodada__lt=rodada.numero_rodada, status='Finalizada')
-        .order_by('-numero_rodada')
-        .first()
-    )
-    if not ultima:
-        return {'mw_base': {}, 'parceiros': {}}
-    return construir_historico_ate_rodada(torneio, ultima.numero_rodada)
-
-
 def _melhor_divisao(grupo: list[int], duplas_anteriores: set[frozenset[int]]):
     """Escolhe a divisão do grupo em duas duplas que menos repete parcerias anteriores."""
 
@@ -81,10 +61,11 @@ def _melhor_divisao(grupo: list[int], duplas_anteriores: set[frozenset[int]]):
     return [grupo[a1], grupo[a2]], [grupo[b1], grupo[b2]]
 
 
-def emparelhar_swiss(rodada, torneio) -> int:
+def emparelhar_swiss(rodada) -> int:
     """Cria as mesas da rodada pelo sistema Swiss adaptado ao 2v2. Retorna nº de mesas."""
+    torneio = rodada.id_torneio
     jogadores = jogadores_ativos_ids(torneio)
-    historico = _historico_anterior(torneio, rodada)
+    historico = historico_anterior(torneio, rodada.numero_rodada)
     pontos = {j: historico['mw_base'].get(j, 0) for j in jogadores}
     parceiros_hist = historico['parceiros']
 
@@ -97,7 +78,7 @@ def emparelhar_swiss(rodada, torneio) -> int:
     random.shuffle(jogadores)
     ordenados = sorted(jogadores, key=lambda j: pontos[j], reverse=True)
 
-    # Escolhe quem fica de bye: menos byes primeiro, depois menor pontuação, depois mais abaixo no ranking
+    # Quem fica de bye: menos byes primeiro, depois menor pontuação, depois mais abaixo no ranking
     qtd_bye = len(ordenados) % 4
     if qtd_bye:
         posicao = {j: i for i, j in enumerate(ordenados)}

@@ -40,8 +40,8 @@ export interface ITorneioCriacao {
   banner?: string;
   vagas_limitadas: boolean;
   qnt_vagas?: number;
-  incricao_gratuita: boolean;
-  valor_incricao?: number;
+  inscricao_gratuita: boolean;
+  valor_inscricao?: number;
   pontuacao_vitoria: number;
   pontuacao_derrota: number;
   pontuacao_empate: number;
@@ -77,8 +77,8 @@ export interface ITorneio {
   banner?: string | null;
   vagas_limitadas: boolean;
   qnt_vagas?: number | null;
-  incricao_gratuita: boolean;
-  valor_incricao?: number | null;
+  inscricao_gratuita: boolean;
+  valor_inscricao?: number | null;
   pontuacao_vitoria: number;
   pontuacao_derrota: number;
   pontuacao_empate: number;

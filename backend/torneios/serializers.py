@@ -2,27 +2,14 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .models import Inscricao, Mesa, MesaJogador, Rodada, Torneio
+from .servicos import validar_vaga
 
-
-class IniciarRodadaSerializer(serializers.Serializer):
-    """Serializer para iniciar rodada emparelhada"""
-
-    forcar_inicio = serializers.BooleanField(
-        default=False,
-        required=False,
-        help_text='Força o início da rodada mesmo que algumas mesas não tenham 4 jogadores',
-    )
-
-
-# Os serializers são responsáveis por converter os objetos do Django (models)
-# em formatos que podem ser transmitidos pela web, como JSON.
-# Eles também fazem o caminho inverso: validam e convertem JSON em objetos.
+# ------------------------------------------------------------------------------
+# Torneio
+# ------------------------------------------------------------------------------
 
 
 class TorneioSerializer(serializers.ModelSerializer):
-    """Serializer para o modelo Torneio."""
-
-    # Campos da loja para exibição
     loja_nome = serializers.CharField(source='id_loja.username', read_only=True)
     loja_email = serializers.CharField(source='id_loja.email', read_only=True)
     loja_tipo = serializers.CharField(source='id_loja.tipo', read_only=True)
@@ -30,26 +17,25 @@ class TorneioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Torneio
         fields = '__all__'
+        # O status só muda pelas ações do torneio (iniciar, cancelar, finalizar...)
+        read_only_fields = ['status']
 
     def validate_data_inicio(self, value):
-        """
-        Valida se a data de início do torneio não é no passado.
-        Torneios só podem ser criados para datas futuras.
-        """
-        agora = timezone.now()
-        if value and value < agora:
-            raise serializers.ValidationError(
-                'A data de início do torneio não pode ser no passado. Torneios devem ser criados apenas para datas futuras.'
-            )
+        """A data de início não pode estar no passado (só checada quando ela muda)."""
+        if self.instance and self.instance.data_inicio == value:
+            return value
+        if value < timezone.now():
+            raise serializers.ValidationError('A data de início do torneio não pode estar no passado.')
         return value
 
 
+# ------------------------------------------------------------------------------
+# Inscrição
+# ------------------------------------------------------------------------------
+
+
 class InscricaoSerializer(serializers.ModelSerializer):
-    """
-    Serializer padrão para modelo Inscricao.
-    Usado para operações de leitura e atualização.
-    Inclui informações do usuário e do torneio.
-    """
+    """Leitura de inscrições. Na edição, só a decklist pode mudar (status muda por desinscrever/reativar)."""
 
     username = serializers.CharField(source='id_usuario.username', read_only=True)
     email = serializers.CharField(source='id_usuario.email', read_only=True)
@@ -57,86 +43,47 @@ class InscricaoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Inscricao
-        fields = [
-            'id',
-            'id_usuario',
-            'username',
-            'email',
-            'id_torneio',
-            'nome_torneio',
-            'decklist',
-            'status',
-            'data_inscricao',
-        ]
-        read_only_fields = ['id', 'data_inscricao']
+        fields = ['id', 'id_usuario', 'username', 'email', 'id_torneio', 'nome_torneio', 'decklist', 'status',
+                  'data_inscricao']  # fmt: skip
+        read_only_fields = ['id', 'id_usuario', 'id_torneio', 'status', 'data_inscricao']
 
-    def validate(self, data):
-        """
-        Validações gerais para atualização de inscrição:
-        - Verifica se o torneio não está em rodada ativa
-        """
-        if self.instance:  # Validação apenas para atualização
-            rodada_ativa = Rodada.objects.filter(
-                id_torneio_id=self.instance.id_torneio_id, status='Em Andamento'
-            ).exists()
 
-            if rodada_ativa:
-                raise serializers.ValidationError('Não é possível alterar inscrição durante uma rodada ativa.')
+def _validar_nova_inscricao(usuario, torneio, *, pela_loja: bool):
+    """Regras comuns para criar uma inscrição. Levanta ValidationError."""
+    if pela_loja:
+        if torneio.status not in (Torneio.Status.ABERTO, Torneio.Status.EM_ANDAMENTO):
+            raise serializers.ValidationError(
+                f'Só é possível inscrever jogadores em torneios abertos ou em andamento. Status atual: {torneio.status}'
+            )
+    else:
+        if torneio.status != Torneio.Status.ABERTO:
+            raise serializers.ValidationError(
+                f'Jogadores só podem se inscrever em torneios abertos. Status atual: {torneio.status}'
+            )
+        if torneio.data_inicio < timezone.now():
+            raise serializers.ValidationError('Não é possível se inscrever: a data de início do torneio já passou.')
 
-        return data
+    if usuario.tipo != 'JOGADOR':
+        raise serializers.ValidationError('Apenas jogadores podem ser inscritos em torneios.')
+    if Inscricao.objects.filter(id_usuario=usuario, id_torneio=torneio).exists():
+        raise serializers.ValidationError(f'O jogador {usuario.username} já está inscrito neste torneio.')
+    validar_vaga(torneio)
 
 
 class InscricaoCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer específico para criação de inscrições por jogadores.
-    Campos reduzidos e validações específicas para jogadores.
-    """
+    """Inscrição feita pelo próprio jogador."""
 
     class Meta:
         model = Inscricao
         fields = ['id_torneio', 'decklist']
 
-    def validate_id_torneio(self, value):
-        """
-        Validações específicas para torneio:
-        - Torneio deve existir e estar aberto
-        - Jogador não pode estar já inscrito
-        - Data de início não pode ser posterior ao momento atual
-        - Respeita limite de vagas quando aplicável
-        """
-        if not value:
-            raise serializers.ValidationError('Torneio é obrigatório.')
-
-        if value.status != 'Aberto':
-            raise serializers.ValidationError(
-                f'Jogadores só podem se inscrever em torneios abertos. Status atual: {value.status}'
-            )
-
-        # Verifica se o usuário já está inscrito
-        if Inscricao.objects.filter(id_usuario=self.context['request'].user, id_torneio=value).exists():
-            raise serializers.ValidationError('Você já está inscrito neste torneio.')
-
-        # Bloqueia inscrição se a data de início do torneio já passou
-        agora = timezone.now()
-        if value.data_inicio and value.data_inicio < agora:
-            raise serializers.ValidationError('Não é possível se inscrever: a data de início do torneio já passou.')
-
-        # Verifica limite de vagas quando aplicável
-        if value.vagas_limitadas and value.qnt_vagas is not None:
-            total_inscritos = Inscricao.objects.filter(id_torneio=value, status='Inscrito').count()
-            if total_inscritos >= value.qnt_vagas:
-                raise serializers.ValidationError(
-                    f'Limite de vagas atingido. Este torneio aceita apenas {value.qnt_vagas} jogadores.'
-                )
-
-        return value
+    def validate(self, data):
+        _validar_nova_inscricao(self.context['request'].user, data['id_torneio'], pela_loja=False)
+        return data
 
 
 class InscricaoLojaSerializer(serializers.ModelSerializer):
-    """
-    Serializer para loja/admin gerenciar inscrições.
-    Inclui campos adicionais e validações específicas para gestão.
-    """
+    """Inscrição de um jogador feita pela loja dona do torneio (ou admin)."""
 
     username = serializers.CharField(source='id_usuario.username', read_only=True)
     email = serializers.CharField(source='id_usuario.email', read_only=True)
@@ -144,86 +91,41 @@ class InscricaoLojaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Inscricao
         fields = ['id', 'id_usuario', 'username', 'email', 'id_torneio', 'decklist', 'status', 'data_inscricao']
-        read_only_fields = ['id', 'data_inscricao']
+        read_only_fields = ['id', 'status', 'data_inscricao']
 
     def validate(self, data):
-        """
-        Validações para criação/atualização por loja/admin:
-        - Usuário deve ser jogador
-        - Torneio deve pertencer à loja (exceto admin)
-        - Validações de status do torneio
-        - Verificação de rodada ativa para atualizações
-        """
-        user = self.context['request'].user
-        usuario = data.get('id_usuario')
-        torneio = data.get('id_torneio')
-
-        # Validação de tipo de usuário
-        if usuario and usuario.tipo != 'JOGADOR':
-            raise serializers.ValidationError('Apenas jogadores podem ser inscritos em torneios.')
-
-        # Validações específicas para loja (admin ignora estas validações)
-        if user.tipo != 'ADMIN':
-            if torneio.id_loja != user:
-                raise serializers.ValidationError('Você só pode gerenciar inscrições dos seus próprios torneios.')
-
-            if torneio.status not in ['Aberto', 'Em Andamento']:
-                raise serializers.ValidationError(
-                    f'Lojas só podem inscrever jogadores em torneios abertos ou em andamento. Status atual: {torneio.status}'
-                )
-
-        # Validação de rodada ativa para atualizações
-        if self.instance:
-            rodada_ativa = Rodada.objects.filter(
-                id_torneio_id=self.instance.id_torneio_id, status='Em Andamento'
-            ).exists()
-
-            if rodada_ativa:
-                raise serializers.ValidationError('Não é possível alterar inscrição durante uma rodada ativa.')
-
-        # Validações adicionais para criação de novas inscrições
-        if not self.instance and torneio and usuario:
-            # Verifica se o usuário já está inscrito
-            if Inscricao.objects.filter(id_usuario=usuario, id_torneio=torneio).exists():
-                raise serializers.ValidationError(f'O jogador {usuario.username} já está inscrito neste torneio.')
-
-            # Bloqueia inscrição se a data de início do torneio já passou
-            agora = timezone.now()
-            if torneio.data_inicio and torneio.data_inicio < agora:
-                raise serializers.ValidationError(
-                    'Não é possível inscrever jogadores: a data de início do torneio já passou.'
-                )
-
-            # Verifica limite de vagas quando aplicável
-            if torneio.vagas_limitadas and torneio.qnt_vagas is not None:
-                total_inscritos = Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').count()
-                if total_inscritos >= torneio.qnt_vagas:
-                    raise serializers.ValidationError(
-                        f'Limite de vagas atingido. Este torneio aceita apenas {torneio.qnt_vagas} jogadores.'
-                    )
-
+        usuario_logado = self.context['request'].user
+        torneio = data['id_torneio']
+        if usuario_logado.tipo != 'ADMIN' and torneio.id_loja_id != usuario_logado.id:
+            raise serializers.ValidationError('Você só pode gerenciar inscrições dos seus próprios torneios.')
+        _validar_nova_inscricao(data['id_usuario'], torneio, pela_loja=True)
         return data
 
 
-class RodadaSerializer(serializers.ModelSerializer):
-    """Serializer para o modelo Rodada."""
+class InscreverPorEmailSerializer(serializers.Serializer):
+    torneio_id = serializers.IntegerField()
+    email = serializers.EmailField()
 
+
+class InscricaoRespostaSerializer(serializers.Serializer):
+    """Formato das respostas das ações de inscrição (documentação Swagger)."""
+
+    message = serializers.CharField()
+    inscricao = InscricaoSerializer()
+
+
+# ------------------------------------------------------------------------------
+# Rodada / mesa
+# ------------------------------------------------------------------------------
+
+
+class RodadaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rodada
         fields = '__all__'
 
 
-class MesaSerializer(serializers.ModelSerializer):
-    """Serializer para o modelo Mesa."""
-
-    class Meta:
-        model = Mesa
-        fields = '__all__'
-
-
 class MesaJogadorSerializer(serializers.ModelSerializer):
-    """Serializer para jogadores na mesa com informações do usuário"""
-
     username = serializers.CharField(source='id_usuario.username', read_only=True)
     email = serializers.CharField(source='id_usuario.email', read_only=True)
 
@@ -233,119 +135,93 @@ class MesaJogadorSerializer(serializers.ModelSerializer):
 
 
 class MesaDetailSerializer(serializers.ModelSerializer):
-    """Serializer detalhado para mesas com jogadores e informações completas"""
-
     jogadores = MesaJogadorSerializer(source='jogadores_na_mesa', many=True, read_only=True)
     numero_rodada = serializers.IntegerField(source='id_rodada.numero_rodada', read_only=True)
     nome_torneio = serializers.CharField(source='id_rodada.id_torneio.nome', read_only=True)
 
     class Meta:
         model = Mesa
-        fields = [
-            'id',
-            'id_rodada',
-            'numero_rodada',
-            'nome_torneio',
-            'numero_mesa',
-            'time_vencedor',
-            'pontuacao_time_1',
-            'pontuacao_time_2',
-            'jogadores',
-        ]
-
-
-class ReportarResultadoSerializer(serializers.Serializer):
-    """Serializer para reportar resultados de partida"""
-
-    pontuacao_time_1 = serializers.IntegerField(min_value=0)
-    pontuacao_time_2 = serializers.IntegerField(min_value=0)
-    time_vencedor = serializers.IntegerField(min_value=0, max_value=2, help_text='0=Empate, 1=Time 1, 2=Time 2')
-
-    def validate(self, data):
-        if data['time_vencedor'] == 1 and data['pontuacao_time_1'] <= data['pontuacao_time_2']:
-            raise serializers.ValidationError('Time 1 não pode ser o vencedor com pontuação menor ou igual ao Time 2')
-        if data['time_vencedor'] == 2 and data['pontuacao_time_2'] <= data['pontuacao_time_1']:
-            raise serializers.ValidationError('Time 2 não pode ser o vencedor com pontuação menor ou igual ao Time 1')
-        if data['time_vencedor'] == 0 and data['pontuacao_time_1'] != data['pontuacao_time_2']:
-            raise serializers.ValidationError('Para empate, as pontuações devem ser iguais')
-        return data
-
-
-class EditarJogadoresMesaSerializer(serializers.Serializer):
-    """Serializer para editar jogadores de uma mesa"""
-
-    jogadores = serializers.ListField(
-        child=serializers.DictField(), help_text="Lista de jogadores: [{'id_usuario': 1, 'time': 1}, {...}]"
-    )
-
-    def validate_jogadores(self, value):
-        """Valida se os jogadores têm a estrutura correta"""
-        for jogador in value:
-            if 'id_usuario' not in jogador or 'time' not in jogador:
-                raise serializers.ValidationError("Cada jogador deve ter 'id_usuario' e 'time'")
-            if jogador['time'] not in [1, 2]:
-                raise serializers.ValidationError('Time deve ser 1 ou 2')
-        return value
+        fields = ['id', 'id_rodada', 'numero_rodada', 'nome_torneio', 'numero_mesa', 'time_vencedor',
+                  'pontuacao_time_1', 'pontuacao_time_2', 'jogadores']  # fmt: skip
 
 
 class VisualizacaoMesaJogadorSerializer(serializers.ModelSerializer):
-    """Serializer para visualização da mesa no formato 2x2"""
+    """Mesa vista por um jogador: times separados."""
 
-    id_torneio = serializers.IntegerField(source='id_rodada.id_torneio.id', read_only=True)
+    id_torneio = serializers.IntegerField(source='id_rodada.id_torneio_id', read_only=True)
     nome_torneio = serializers.CharField(source='id_rodada.id_torneio.nome', read_only=True)
     numero_rodada = serializers.IntegerField(source='id_rodada.numero_rodada', read_only=True)
     status_rodada = serializers.CharField(source='id_rodada.status', read_only=True)
-
-    # Times com 2 jogadores cada
     time_1 = serializers.SerializerMethodField()
     time_2 = serializers.SerializerMethodField()
 
     class Meta:
         model = Mesa
-        fields = [
-            'id',
-            'numero_mesa',
-            'id_torneio',
-            'nome_torneio',
-            'numero_rodada',
-            'status_rodada',
-            'pontuacao_time_1',
-            'pontuacao_time_2',
-            'time_vencedor',
-            'time_1',
-            'time_2',
-        ]
+        fields = ['id', 'numero_mesa', 'id_torneio', 'nome_torneio', 'numero_rodada', 'status_rodada',
+                  'pontuacao_time_1', 'pontuacao_time_2', 'time_vencedor', 'time_1', 'time_2']  # fmt: skip
 
-    def get_time_1(self, obj):
-        """Retorna os 2 jogadores do time 1"""
-        jogadores_time_1 = obj.jogadores_na_mesa.filter(time=1).order_by('id')
-        return MesaJogadorSerializer(jogadores_time_1, many=True).data
+    def _jogadores_do_time(self, mesa, time):
+        jogadores = [j for j in mesa.jogadores_na_mesa.all() if j.time == time]
+        return MesaJogadorSerializer(sorted(jogadores, key=lambda j: j.id), many=True).data
 
-    def get_time_2(self, obj):
-        """Retorna os 2 jogadores do time 2"""
-        jogadores_time_2 = obj.jogadores_na_mesa.filter(time=2).order_by('id')
-        return MesaJogadorSerializer(jogadores_time_2, many=True).data
+    def get_time_1(self, mesa):
+        return self._jogadores_do_time(mesa, 1)
+
+    def get_time_2(self, mesa):
+        return self._jogadores_do_time(mesa, 2)
 
 
-# Serializers para respostas padrão
+class ResultadoMesaSerializer(serializers.Serializer):
+    """Placar de uma mesa. O vencedor precisa ser coerente com o placar."""
+
+    pontuacao_time_1 = serializers.IntegerField(min_value=0)
+    pontuacao_time_2 = serializers.IntegerField(min_value=0)
+    time_vencedor = serializers.ChoiceField(choices=Mesa.Resultado.choices, help_text='0=Empate, 1=Time 1, 2=Time 2')
+
+    def validate(self, data):
+        p1, p2, vencedor = data['pontuacao_time_1'], data['pontuacao_time_2'], data['time_vencedor']
+        if vencedor == Mesa.Resultado.TIME_1 and p1 <= p2:
+            raise serializers.ValidationError('Time 1 não pode ser o vencedor com pontuação menor ou igual ao Time 2')
+        if vencedor == Mesa.Resultado.TIME_2 and p2 <= p1:
+            raise serializers.ValidationError('Time 2 não pode ser o vencedor com pontuação menor ou igual ao Time 1')
+        if vencedor == Mesa.Resultado.EMPATE and p1 != p2:
+            raise serializers.ValidationError('Para empate, as pontuações devem ser iguais')
+        return data
 
 
-class InscricaoResponseSerializer(serializers.Serializer):
-    """Response padrão para operações de inscrição"""
-
-    message = serializers.CharField(help_text='Mensagem de sucesso')
-    inscricao = InscricaoSerializer(required=False, help_text='Dados da inscrição')
+# ------------------------------------------------------------------------------
+# Payloads das ações de emparelhamento
+# ------------------------------------------------------------------------------
 
 
-class DesinscricaoResponseSerializer(serializers.Serializer):
-    """Response para desinscrição"""
+class IniciarRodadaSerializer(serializers.Serializer):
+    forcar_inicio = serializers.BooleanField(
+        default=False, help_text='Inicia mesmo que alguma mesa não tenha exatamente 4 jogadores.'
+    )
 
-    message = serializers.CharField(help_text='Mensagem de sucesso')
+
+class EmparelhamentoAutomaticoSerializer(serializers.Serializer):
+    tipo = serializers.ChoiceField(choices=['random', 'swiss'], default='swiss')
 
 
-class ListaInscricoesResponseSerializer(serializers.Serializer):
-    """Response para lista de inscrições de um torneio"""
+class EditarEmparelhamentoSerializer(serializers.Serializer):
+    acao = serializers.ChoiceField(choices=['mover_jogador_para_mesa', 'alterar_time_jogador'])
+    jogador_id = serializers.IntegerField()
+    nova_mesa_id = serializers.IntegerField(required=False, help_text='Obrigatório para mover_jogador_para_mesa.')
+    novo_time = serializers.ChoiceField(
+        choices=[1, 2], required=False, help_text='Obrigatório para alterar_time_jogador.'
+    )
 
-    torneio = TorneioSerializer(help_text='Dados do torneio')
-    inscricoes = InscricaoSerializer(many=True, help_text='Lista de inscrições')
-    total_inscritos = serializers.IntegerField(help_text='Total de jogadores inscritos')
+    def validate(self, data):
+        if data['acao'] == 'mover_jogador_para_mesa' and not data.get('nova_mesa_id'):
+            raise serializers.ValidationError('nova_mesa_id é obrigatório para mover_jogador_para_mesa')
+        if data['acao'] == 'alterar_time_jogador' and not data.get('novo_time'):
+            raise serializers.ValidationError('novo_time é obrigatório para alterar_time_jogador')
+        return data
+
+
+class PosicionarJogadorSerializer(serializers.Serializer):
+    mesa_id = serializers.IntegerField()
+    time = serializers.ChoiceField(choices=[1, 2])
+    position = serializers.ChoiceField(choices=[1, 2], default=1, help_text='Posição dentro do time (1 ou 2).')
+    jogador_id = serializers.IntegerField(default=0, help_text='0 esvazia a posição.')

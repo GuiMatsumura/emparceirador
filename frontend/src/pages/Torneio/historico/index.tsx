@@ -271,10 +271,10 @@ const HistoricoTorneios: React.FC = () => {
             date: dt ? dt.toLocaleDateString() : "",
             time: dt ? dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
             location: t.loja_nome ?? "loja",
-            price: t.incricao_gratuita
+            price: t.inscricao_gratuita
                 ? "Gratuita"
-                : t.valor_incricao
-                    ? `R$ ${String(t.valor_incricao).replace(".", ",")}`
+                : t.valor_inscricao
+                    ? `R$ ${String(t.valor_inscricao).replace(".", ",")}`
                     : "—",
 
             ...(isLoja ? {players: Number(t.qnt_inscritos ?? t.inscritos ?? 0) } : {}),

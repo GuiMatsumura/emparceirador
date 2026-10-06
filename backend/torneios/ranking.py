@@ -1,8 +1,8 @@
 """
 Utilitários para cálculo de ranking de torneios 2v2 com duplas aleatórias.
 
-Este módulo implementa o algoritmo de desempate avançado documentado em
-ALGORITMO_PAREAMENTO_2V2.md, com otimizações de performance.
+Este módulo implementa o algoritmo de desempate documentado em
+docs/algoritmo-ranking-2v2.md.
 
 Critérios de desempate (em cascata):
 1. Pontuação Total (Match Points)
@@ -25,7 +25,6 @@ from .models import Inscricao, RankingParcial, Rodada, Torneio
 
 # Constante para arredondamento decimal
 QUATRO_CASAS = Decimal('0.0001')
-FLOOR_MW = Decimal('0.0100')  # 1% floor (máxima precisão, evita divisão por zero)
 
 
 def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> dict:
@@ -43,7 +42,7 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> dict
     """
     # 1 query otimizada com prefetch_related
     rodadas = (
-        Rodada.objects.filter(id_torneio=torneio, numero_rodada__lte=rodada_numero, status='Finalizada')
+        Rodada.objects.filter(id_torneio=torneio, numero_rodada__lte=rodada_numero, status=Rodada.Status.FINALIZADA)
         .prefetch_related('mesas__jogadores_na_mesa__id_usuario')
         .order_by('numero_rodada')
     )
@@ -120,8 +119,8 @@ def construir_historico_ate_rodada(torneio: Torneio, rodada_numero: int) -> dict
                 oponentes[j2][rodada.numero_rodada] = jogadores_time_1
 
     # Adicionar jogadores com bye (inscritos ativos que não estão em nenhuma mesa da rodada)
-    jogadores_ativos = Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').values_list(
-        'id_usuario_id', 'data_inscricao'
+    jogadores_ativos = (
+        Inscricao.objects.ativas().filter(id_torneio=torneio).values_list('id_usuario_id', 'data_inscricao')
     )
 
     for jogador_id, data_inscricao in jogadores_ativos:
@@ -378,14 +377,68 @@ def calcular_e_salvar_ranking_parcial(torneio: Torneio, rodada_numero: int) -> l
     return ranking_ordenado
 
 
-def obter_jogadores_ativos(torneio: Torneio) -> list[int]:
-    """
-    Retorna lista de IDs de jogadores ativos (inscritos) no torneio.
+def ranking_salvo(torneio: Torneio, rodada_numero: int) -> list[dict]:
+    """Ranking já calculado (RankingParcial) no formato devolvido pela API."""
+    return [
+        {
+            'posicao': item.posicao,
+            'jogador_id': item.id_usuario_id,
+            'jogador_nome': item.id_usuario.username,
+            'pontos': item.pontos_totais,
+            'mw_percentage': float(item.mw_percentage),
+            'omw_percentage': float(item.omw_percentage),
+            'pmw_percentage': float(item.pmw_percentage),
+            'balanco': float(item.balanco),
+        }
+        for item in RankingParcial.objects.filter(id_torneio=torneio, rodada_numero=rodada_numero)
+        .select_related('id_usuario')
+        .order_by('posicao')
+    ]
 
-    Args:
-        torneio: Instância do torneio
 
-    Returns:
-        list: IDs dos jogadores ativos
+def ranking_da_rodada(torneio: Torneio, rodada: Rodada) -> list[dict]:
     """
-    return list(Inscricao.objects.filter(id_torneio=torneio, status='Inscrito').values_list('id_usuario_id', flat=True))
+    Ranking acumulado até a rodada informada.
+
+    - Rodada finalizada: usa o RankingParcial (calcula e salva se ainda não existir).
+    - Rodada em andamento/emparelhamento: só os pontos das rodadas finalizadas anteriores
+      (as métricas de desempate só existem para rodadas finalizadas).
+    """
+    if rodada.status == Rodada.Status.FINALIZADA:
+        ranking = ranking_salvo(torneio, rodada.numero_rodada)
+        if not ranking:
+            calcular_e_salvar_ranking_parcial(torneio, rodada.numero_rodada)
+            ranking = ranking_salvo(torneio, rodada.numero_rodada)
+        return ranking
+
+    pontos = pontos_acumulados(torneio, antes_da_rodada=rodada.numero_rodada)
+    ativos = Inscricao.objects.ativas().filter(id_torneio=torneio).select_related('id_usuario')
+    jogadores = sorted(
+        ((i.id_usuario_id, i.id_usuario.username, pontos.get(i.id_usuario_id, 0)) for i in ativos),
+        key=lambda jogador: jogador[2],
+        reverse=True,
+    )
+    return [
+        {'posicao': posicao, 'jogador_id': jogador_id, 'jogador_nome': nome, 'pontos': pts}
+        for posicao, (jogador_id, nome, pts) in enumerate(jogadores, start=1)
+    ]
+
+
+def ultima_rodada_finalizada(torneio: Torneio, antes_da_rodada: int | None = None) -> Rodada | None:
+    rodadas = Rodada.objects.filter(id_torneio=torneio, status=Rodada.Status.FINALIZADA)
+    if antes_da_rodada is not None:
+        rodadas = rodadas.filter(numero_rodada__lt=antes_da_rodada)
+    return rodadas.order_by('-numero_rodada').first()
+
+
+def historico_anterior(torneio: Torneio, antes_da_rodada: int) -> dict:
+    """Histórico (pontos, parceiros, oponentes) das rodadas finalizadas antes da rodada informada."""
+    ultima = ultima_rodada_finalizada(torneio, antes_da_rodada)
+    if not ultima:
+        return {'pontos_por_rodada': {}, 'parceiros': {}, 'oponentes': {}, 'mw_base': {}, 'num_rodadas_jogadas': {}}
+    return construir_historico_ate_rodada(torneio, ultima.numero_rodada)
+
+
+def pontos_acumulados(torneio: Torneio, antes_da_rodada: int) -> dict[int, int]:
+    """Pontos totais (com byes) de cada jogador nas rodadas finalizadas antes da rodada informada."""
+    return historico_anterior(torneio, antes_da_rodada)['mw_base']

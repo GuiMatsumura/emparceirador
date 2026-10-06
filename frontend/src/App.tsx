@@ -208,7 +208,7 @@ const obterTagsTorneio = (torneio: ITorneio): Array<{
 
   // Adiciona tag de gratuito/pago
   tags.push({
-    texto: torneio.incricao_gratuita ? "Gratuito" : "Pago"
+    texto: torneio.inscricao_gratuita ? "Gratuito" : "Pago"
   });
 
   // Adiciona tag de vagas limitadas se aplicável

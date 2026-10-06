@@ -102,8 +102,8 @@ export const criarTorneio = async (dadosTorneio: ITorneioCriacao): Promise<ITorn
     formData.append('banner', dadosTorneio.banner);
     formData.append('vagas_limitadas', dadosTorneio.vagas_limitadas.toString());
     if (dadosTorneio.qnt_vagas) formData.append('qnt_vagas', dadosTorneio.qnt_vagas.toString());
-    formData.append('incricao_gratuita', dadosTorneio.incricao_gratuita.toString());
-    if (dadosTorneio.valor_incricao) formData.append('valor_incricao', dadosTorneio.valor_incricao.toString());
+    formData.append('inscricao_gratuita', dadosTorneio.inscricao_gratuita.toString());
+    if (dadosTorneio.valor_inscricao) formData.append('valor_inscricao', dadosTorneio.valor_inscricao.toString());
     formData.append('pontuacao_vitoria', dadosTorneio.pontuacao_vitoria.toString());
     formData.append('pontuacao_derrota', dadosTorneio.pontuacao_derrota.toString());
     formData.append('pontuacao_empate', dadosTorneio.pontuacao_empate.toString());
@@ -557,12 +557,6 @@ export const proximaRodadaNovo = async (idTorneio: number) => {
   return response.data;
 };
 
-// Função para obter dados de emparelhamento da rodada
-export const obterEmparelhamento = async (idRodada: number) => {
-  const response = await api.get(`torneios/rodadas/${idRodada}/emparelhamento/`);
-  return response.data;
-};
-
 // Função para emparelhar jogadores automaticamente
 export const emparelharAutomatico = async (
   idRodada: number,
@@ -570,23 +564,6 @@ export const emparelharAutomatico = async (
 ) => {
   const response = await api.post(`torneios/rodadas/${idRodada}/emparelhar_automatico/`, {
     tipo: tipo
-  });
-  return response.data;
-};
-
-// Função para editar emparelhamento manualmente
-export const editarEmparelhamento = async (
-  idRodada: number,
-  acao: 'mover_jogador' | 'remover_mesa' | 'adicionar_mesa' | 'alterar_time',
-  jogadorId: number,
-  mesaId?: number,
-  novoTime?: 1 | 2
-) => {
-  const response = await api.post(`torneios/rodadas/${idRodada}/editar_emparelhamento/`, {
-    acao: acao,
-    mesa_id: mesaId,
-    jogador_id: jogadorId,
-    novo_time: novoTime
   });
   return response.data;
 };

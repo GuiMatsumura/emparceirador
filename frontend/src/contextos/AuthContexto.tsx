@@ -123,8 +123,8 @@ export const GerenciadorSessao = ({ children }: GerenciadorSessaoProps) => {
       setUsuario(usuarioLogado);
     } catch (error) {
       // Captura o erro do Axios e exibe uma mensagem amigável.
-      const axiosError = error as AxiosError<{ error: string }>;
-      const mensagemErro = axiosError.response?.data?.error || "Ocorreu um erro desconhecido.";
+      const axiosError = error as AxiosError<{ detail: string }>;
+      const mensagemErro = axiosError.response?.data?.detail || "Ocorreu um erro desconhecido.";
       Swal.fire('Erro no Login', mensagemErro, 'error');
       // Garante que o estado de erro seja relançado para que o componente
       // que chamou a função saiba que o login falhou.

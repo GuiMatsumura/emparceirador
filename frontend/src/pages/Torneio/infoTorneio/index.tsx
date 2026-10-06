@@ -93,13 +93,13 @@ const InformacaoTorneio: React.FC = () => {
             })}
             location={`Loja ${torneio.loja_nome}`}
             price={
-              torneio.incricao_gratuita
+              torneio.inscricao_gratuita
                 ? "Gratuito"
-                : torneio.valor_incricao
+                : torneio.valor_inscricao
                   ? new Intl.NumberFormat("pt-BR", {
                     style: "currency",
                     currency: "BRL",
-                  }).format(torneio.valor_incricao)
+                  }).format(torneio.valor_inscricao)
                   : "Não informado"
             }
             hidePlayers

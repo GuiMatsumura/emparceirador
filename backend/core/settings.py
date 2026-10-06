@@ -117,6 +117,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    # Limita tentativas em login e redefinição de senha (views com throttle_scope='autenticacao')
+    'DEFAULT_THROTTLE_CLASSES': ['rest_framework.throttling.ScopedRateThrottle'],
+    'DEFAULT_THROTTLE_RATES': {'autenticacao': '10/minute'},
 }
 
 # ------------------------------------------------------------------------------

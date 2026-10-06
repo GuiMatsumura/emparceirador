@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import type { ITorneio, IRodada, IMesaRodada, IJogadorMesa } from "../../../tipos/tipos";
-import { buscarJogadoresInscritos, buscarSobressalentes, buscarTorneioPorId, tratarErroTorneio, iniciarTorneio, proximaRodadaTorneio, proximaRodadaNovo, finalizarTorneio, buscarRankingRodada, obterEmparelhamento, emparelharAutomatico, iniciarRodada, reemparelharRodada, editarEmparelhamentoManual, atualizarTorneio, buscarInscricoesAtivasCompletas, cancelarTorneio } from "../../../services/torneioServico";
+import { buscarJogadoresInscritos, buscarSobressalentes, buscarTorneioPorId, tratarErroTorneio, iniciarTorneio, proximaRodadaTorneio, proximaRodadaNovo, finalizarTorneio, buscarRankingRodada, emparelharAutomatico, iniciarRodada, reemparelharRodada, editarEmparelhamentoManual, atualizarTorneio, buscarInscricoesAtivasCompletas, cancelarTorneio } from "../../../services/torneioServico";
 import { buscarRodadasDoTorneio, buscarMesasDaRodada } from "../../../services/mesaServico";
 import styles from "./styles.module.css";
 import modalStyles from "./modalEditarStyles.module.css";
@@ -401,13 +401,13 @@ const InformacaoTorneioLoja: React.FC = () => {
     }
 
     setEditRegras(tournament.regras || "");
-    setEditModalidadeInscricao(tournament.incricao_gratuita ? "gratuito" : "pago");
+    setEditModalidadeInscricao(tournament.inscricao_gratuita ? "gratuito" : "pago");
 
     // Corrigir carregamento do valor da inscrição
-    if (!tournament.incricao_gratuita && tournament.valor_incricao !== null && tournament.valor_incricao !== undefined) {
-      const valorNumerico = typeof tournament.valor_incricao === 'number'
-        ? tournament.valor_incricao
-        : parseFloat(tournament.valor_incricao);
+    if (!tournament.inscricao_gratuita && tournament.valor_inscricao !== null && tournament.valor_inscricao !== undefined) {
+      const valorNumerico = typeof tournament.valor_inscricao === 'number'
+        ? tournament.valor_inscricao
+        : parseFloat(tournament.valor_inscricao);
 
       if (!isNaN(valorNumerico) && valorNumerico > 0) {
         setEditValorInscricao(`R$ ${valorNumerico.toFixed(2).replace('.', ',')}`);
@@ -505,9 +505,9 @@ const InformacaoTorneioLoja: React.FC = () => {
       const minuto = String(dataLocal.getMinutes()).padStart(2, '0');
       const segundo = String(dataLocal.getSeconds()).padStart(2, '0');
       dadosAtualizacao.data_inicio = `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}`;
-      dadosAtualizacao.incricao_gratuita = editModalidadeInscricao === "gratuito";
+      dadosAtualizacao.inscricao_gratuita = editModalidadeInscricao === "gratuito";
       if (editModalidadeInscricao === "pago") {
-        dadosAtualizacao.valor_incricao = parseFloat(editValorInscricao.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
+        dadosAtualizacao.valor_inscricao = parseFloat(editValorInscricao.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
       }
       dadosAtualizacao.vagas_limitadas = editVagasLimitadas === "limitadas";
       if (editVagasLimitadas === "limitadas" && editCapacidadeMaxima) {
@@ -1821,13 +1821,13 @@ const InformacaoTorneioLoja: React.FC = () => {
                 })}
                 location={tournament.loja_nome || 'Loja não especificada'}
                 price={
-                  tournament.incricao_gratuita
+                  tournament.inscricao_gratuita
                       ? "Gratuito"
-                      : tournament.valor_incricao
+                      : tournament.valor_inscricao
                           ? new Intl.NumberFormat("pt-BR", {
                             style: "currency",
                             currency: "BRL",
-                          }).format(tournament.valor_incricao)
+                          }).format(tournament.valor_inscricao)
                           : "Não informado"
                 }
                 players={jogadoresInscritos.length}

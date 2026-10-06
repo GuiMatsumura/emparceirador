@@ -3,10 +3,13 @@ from django.db import models
 
 
 class Torneio(models.Model):
-    """
-    Armazena as informações principais de um torneio.
-    Cada torneio é criado e gerenciado por um usuário do tipo 'LOJA'.
-    """
+    """Torneio criado e gerenciado por um usuário do tipo LOJA."""
+
+    class Status(models.TextChoices):
+        ABERTO = 'Aberto'
+        EM_ANDAMENTO = 'Em Andamento'
+        FINALIZADO = 'Finalizado'
+        CANCELADO = 'Cancelado'
 
     id_loja = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -14,43 +17,53 @@ class Torneio(models.Model):
         related_name='torneios_criados',
         help_text='Usuário (loja) que criou o torneio.',
     )
-    nome = models.CharField(max_length=255, help_text='Nome do torneio')
-    descricao = models.TextField(blank=True, null=True, help_text='Descrição detalhada do torneio')
-    status = models.CharField(max_length=50, default='Aberto', help_text='Ex: Aberto, Em Andamento, Finalizado')
-    regras = models.TextField(help_text='Regras específicas do torneio')
+    nome = models.CharField(max_length=255)
+    descricao = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=50, choices=Status.choices, default=Status.ABERTO)
+    regras = models.TextField()
     banner = models.CharField(
-        max_length=255, blank=True, null=True, help_text='Nome do arquivo do banner (ex: b1.png, b2.png)'
+        max_length=255, blank=True, default='', help_text='Nome do arquivo do banner no frontend (ex: b1.png).'
     )
-    vagas_limitadas = models.BooleanField(default=True, help_text='Se o torneio tem limite de vagas')
-    qnt_vagas = models.PositiveIntegerField(blank=True, null=True, help_text='Quantidade de vagas disponíveis')
-    incricao_gratuita = models.BooleanField(default=True, help_text='Se a inscrição é gratuita')
-    valor_incricao = models.DecimalField(
-        max_digits=10, decimal_places=2, blank=True, null=True, help_text='Valor da inscrição em reais'
+    vagas_limitadas = models.BooleanField(default=True)
+    qnt_vagas = models.PositiveIntegerField(blank=True, null=True)
+    inscricao_gratuita = models.BooleanField(default=True)
+    valor_inscricao = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True, help_text='Valor da inscrição em reais.'
     )
-    pontuacao_vitoria = models.PositiveIntegerField(default=3, help_text='Pontos por vitória')
-    pontuacao_derrota = models.PositiveIntegerField(default=0, help_text='Pontos por derrota')
-    pontuacao_empate = models.PositiveIntegerField(default=1, help_text='Pontos por empate')
-    pontuacao_bye = models.PositiveIntegerField(default=3, help_text='Pontos por bye')
+    pontuacao_vitoria = models.PositiveIntegerField(default=3)
+    pontuacao_derrota = models.PositiveIntegerField(default=0)
+    pontuacao_empate = models.PositiveIntegerField(default=1)
+    pontuacao_bye = models.PositiveIntegerField(default=3)
     quantidade_rodadas = models.PositiveIntegerField(
-        blank=True, null=True, help_text='Quantidade de rodadas do torneio'
+        blank=True, null=True, help_text='Limite de rodadas. Vazio = sem limite.'
     )
-    data_inicio = models.DateTimeField(help_text='Data e hora de início do torneio')
+    data_inicio = models.DateTimeField()
 
     def __str__(self):
         return self.nome
 
 
+class InscricaoQuerySet(models.QuerySet):
+    def ativas(self):
+        """Inscrições que participam do torneio. Fonte única do critério de 'jogador ativo'."""
+        return self.filter(status=Inscricao.Status.INSCRITO)
+
+
 class Inscricao(models.Model):
-    """
-    Representa a inscrição de um usuário em um torneio.
-    """
+    """Inscrição de um jogador em um torneio. Saída é soft delete (status Cancelado + data_saida)."""
+
+    class Status(models.TextChoices):
+        INSCRITO = 'Inscrito'
+        CANCELADO = 'Cancelado'
 
     id_usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='inscricoes')
     id_torneio = models.ForeignKey(Torneio, on_delete=models.CASCADE, related_name='inscritos')
-    decklist = models.TextField(blank=True, help_text='Lista de cartas do deck do jogador.')
-    status = models.CharField(max_length=50, default='Inscrito', help_text="'Inscrito', 'Cancelado', ou 'Inativo'")
-    data_inscricao = models.DateTimeField(auto_now_add=True, help_text='Data da primeira inscrição')
-    data_saida = models.DateTimeField(null=True, blank=True, help_text='Data em que saiu ou foi removido')
+    decklist = models.TextField(blank=True)
+    status = models.CharField(max_length=50, choices=Status.choices, default=Status.INSCRITO)
+    data_inscricao = models.DateTimeField(auto_now_add=True)
+    data_saida = models.DateTimeField(null=True, blank=True)
+
+    objects = InscricaoQuerySet.as_manager()
 
     class Meta:
         unique_together = ('id_usuario', 'id_torneio')
@@ -58,26 +71,22 @@ class Inscricao(models.Model):
     def __str__(self):
         return f'{self.id_usuario.username} no {self.id_torneio.nome}'
 
-    def esta_ativo_na_data(self, data_referencia):
-        """
-        Verifica se a inscrição estava ativa em uma determinada data.
-        Ativa se: não foi cancelada OU foi cancelada depois da data de referência.
-        """
-        if self.status == 'Cancelado':
-            return self.data_saida is None or self.data_saida > data_referencia
-        return self.data_inscricao <= data_referencia
-
 
 class Rodada(models.Model):
     """
-    Armazena os dados de uma rodada específica de um torneio.
+    Rodada de um torneio.
+
+    Ciclo: Emparelhamento -> Em Andamento -> Finalizada. A Rodada 1 nasce Em Andamento.
     """
+
+    class Status(models.TextChoices):
+        EMPARELHAMENTO = 'Emparelhamento'
+        EM_ANDAMENTO = 'Em Andamento'
+        FINALIZADA = 'Finalizada'
 
     id_torneio = models.ForeignKey(Torneio, on_delete=models.CASCADE, related_name='rodadas')
     numero_rodada = models.IntegerField()
-    status = models.CharField(
-        max_length=50, default='Pendente', help_text='Ex: Emparelhamento, Em Andamento, Finalizada'
-    )
+    status = models.CharField(max_length=50, choices=Status.choices, default=Status.EMPARELHAMENTO)
     data_inicio = models.DateTimeField(
         null=True,
         blank=True,
@@ -93,29 +102,31 @@ class Rodada(models.Model):
 
 
 class Mesa(models.Model):
-    """
-    Representa uma mesa de jogo em uma determinada rodada.
-    """
+    """Mesa 2v2 de uma rodada."""
+
+    class Resultado(models.IntegerChoices):
+        EMPATE = 0
+        TIME_1 = 1
+        TIME_2 = 2
 
     id_rodada = models.ForeignKey(Rodada, on_delete=models.CASCADE, related_name='mesas')
     numero_mesa = models.IntegerField()
-    time_vencedor = models.IntegerField(null=True, blank=True, help_text='1=Time 1, 2=Time 2, 0=Empate')
-    pontuacao_time_1 = models.IntegerField(default=0, help_text='Placar do time 1 (ex: 2 vitórias parciais)')
-    pontuacao_time_2 = models.IntegerField(default=0, help_text='Placar do time 2 (ex: 1 vitória parcial)')
+    time_vencedor = models.IntegerField(
+        choices=Resultado.choices, null=True, blank=True, help_text='Nulo enquanto o resultado não foi reportado.'
+    )
+    pontuacao_time_1 = models.IntegerField(default=0)
+    pontuacao_time_2 = models.IntegerField(default=0)
 
     def __str__(self):
         return f'Mesa {self.numero_mesa} da {self.id_rodada}'
 
 
 class MesaJogador(models.Model):
-    """
-    Tabela de ligação que aloca um jogador a uma mesa e a um time.
-    Esta é a peça central para saber quem jogou com quem e contra quem.
-    """
+    """Aloca um jogador a uma mesa e a um time (1 ou 2)."""
 
     id_mesa = models.ForeignKey(Mesa, on_delete=models.CASCADE, related_name='jogadores_na_mesa')
     id_usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    time = models.IntegerField(help_text='1 ou 2, para definir a equipe do jogador na mesa.')
+    time = models.IntegerField(choices=[(1, 'Time 1'), (2, 'Time 2')])
 
     class Meta:
         unique_together = ('id_mesa', 'id_usuario')
@@ -128,30 +139,19 @@ class MesaJogador(models.Model):
 
 
 class RankingParcial(models.Model):
-    """
-    Cache de métricas de ranking calculadas após cada rodada.
-    Armazena o ranking parcial de um jogador até uma rodada específica.
-    """
+    """Ranking de um jogador calculado ao final de uma rodada (cache das métricas de desempate)."""
 
     id_torneio = models.ForeignKey(Torneio, on_delete=models.CASCADE, related_name='rankings_parciais')
     id_usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rankings')
-    rodada_numero = models.IntegerField(help_text='Até qual rodada foi calculado')
+    rodada_numero = models.IntegerField(help_text='Até qual rodada foi calculado.')
 
-    # Métricas calculadas
-    pontos_totais = models.IntegerField(default=0, help_text='Pontos totais acumulados até a rodada')
-    mw_percentage = models.DecimalField(max_digits=5, decimal_places=4, help_text='Match Win Percentage (floor 33%)')
-    omw_percentage = models.DecimalField(
-        max_digits=5, decimal_places=4, help_text='Opponent Match Win Percentage - força dos oponentes'
-    )
-    pmw_percentage = models.DecimalField(
-        max_digits=5, decimal_places=4, help_text='Partner Match Win Percentage - força dos parceiros'
-    )
-    balanco = models.DecimalField(max_digits=6, decimal_places=4, help_text='OMW% - PMW% (pode ser negativo)')
-
-    posicao = models.IntegerField(help_text='Posição no ranking nesta rodada')
-
-    # Metadados
-    data_calculo = models.DateTimeField(auto_now=True, help_text='Data do último cálculo')
+    pontos_totais = models.IntegerField(default=0)
+    mw_percentage = models.DecimalField(max_digits=5, decimal_places=4, help_text='Match Win % (piso de 1%).')
+    omw_percentage = models.DecimalField(max_digits=5, decimal_places=4, help_text='Média do MW% dos oponentes.')
+    pmw_percentage = models.DecimalField(max_digits=5, decimal_places=4, help_text='Média do MW% dos parceiros.')
+    balanco = models.DecimalField(max_digits=6, decimal_places=4, help_text='OMW% - PMW% (pode ser negativo).')
+    posicao = models.IntegerField()
+    data_calculo = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ('id_torneio', 'id_usuario', 'rodada_numero')

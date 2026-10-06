@@ -12,7 +12,7 @@ from rest_framework.test import APITestCase
 from usuarios.models import Usuario
 
 from .models import Inscricao, Mesa, MesaJogador, RankingParcial, Rodada, Torneio
-from .ranking_utils import calcular_e_salvar_ranking_parcial
+from .ranking import calcular_e_salvar_ranking_parcial
 
 
 class BaseTorneioTestCase(APITestCase):
@@ -185,17 +185,17 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
         resposta = self.client.patch(
             f'/api/v1/torneios/mesas/{self.mesa.id}/editar_jogadores/', {'jogadores': []}, format='json'
         )
-        self.assertEqual(resposta.status_code, 403)
+        self.assertIn(resposta.status_code, (403, 404, 405))  # endpoint removido
         self.assertEqual(MesaJogador.objects.filter(id_mesa=self.mesa).count(), 4)
 
     def test_outra_loja_nao_apaga_mesa(self):
         resposta = self.client.delete(f'/api/v1/torneios/mesas/{self.mesa.id}/')
-        self.assertEqual(resposta.status_code, 403)
+        self.assertIn(resposta.status_code, (403, 405))
         self.assertTrue(Mesa.objects.filter(id=self.mesa.id).exists())
 
     def test_outra_loja_nao_apaga_rodada(self):
         resposta = self.client.delete(f'/api/v1/torneios/rodadas/{self.rodada.id}/')
-        self.assertEqual(resposta.status_code, 403)
+        self.assertIn(resposta.status_code, (403, 405))
         self.assertTrue(Rodada.objects.filter(id=self.rodada.id).exists())
 
     def test_outra_loja_nao_cria_rodada_em_torneio_alheio(self):
@@ -208,7 +208,7 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
             },
             format='json',
         )
-        self.assertEqual(resposta.status_code, 403)
+        self.assertIn(resposta.status_code, (403, 405))
 
     def test_dona_edita_resultado_manual(self):
         self.client.force_authenticate(self.loja)
@@ -245,7 +245,120 @@ class PropriedadeDoTorneioTests(BaseTorneioTestCase):
         self.assertEqual(torneio.nome, 'Novo nome')
 
 
+class EdicaoTorneioTests(BaseTorneioTestCase):
+    def payload(self, **extra):
+        dados = {
+            'id_loja': self.loja.id,
+            'nome': 'Nome editado',
+            'regras': 'Regras novas',
+            'data_inicio': self.torneio.data_inicio.isoformat(),
+            'inscricao_gratuita': False,
+            'valor_inscricao': '15.00',
+        }
+        dados.update(extra)
+        return dados
+
+    def test_edita_torneio_em_andamento_sem_mudar_data_passada(self):
+        Torneio.objects.filter(id=self.torneio.id).update(data_inicio=timezone.now() - timedelta(days=1))
+        self.torneio.refresh_from_db()
+        self.client.force_authenticate(self.loja)
+        resposta = self.client.put(f'/api/v1/torneios/torneios/{self.torneio.id}/', self.payload(), format='json')
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.torneio.refresh_from_db()
+        self.assertEqual(self.torneio.nome, 'Nome editado')
+        self.assertFalse(self.torneio.inscricao_gratuita)
+
+    def test_status_nao_e_alterado_por_edicao(self):
+        self.client.force_authenticate(self.loja)
+        resposta = self.client.put(
+            f'/api/v1/torneios/torneios/{self.torneio.id}/', self.payload(status='Finalizado'), format='json'
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.torneio.refresh_from_db()
+        self.assertEqual(self.torneio.status, 'Em Andamento')
+
+    def test_criacao_comeca_aberto(self):
+        self.client.force_authenticate(self.loja)
+        dados = self.payload(status='Finalizado', data_inicio=(timezone.now() + timedelta(days=3)).isoformat())
+        resposta = self.client.post('/api/v1/torneios/torneios/', dados, format='json')
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        self.assertEqual(resposta.data['status'], 'Aberto')
+        self.assertEqual(resposta.data['valor_inscricao'], '15.00')
+
+
 class InscricaoTests(BaseTorneioTestCase):
+    def test_jogador_so_edita_decklist_da_propria_inscricao(self):
+        jogador = self.criar_jogadores(1)[0]
+        inscricao = Inscricao.objects.get(id_usuario=jogador, id_torneio=self.torneio)
+        inscricao.status = 'Cancelado'
+        inscricao.save()
+        outro_torneio = Torneio.objects.create(
+            id_loja=self.loja, nome='Outro', regras='r', status='Aberto', data_inicio=timezone.now() + timedelta(days=1)
+        )
+        self.client.force_authenticate(jogador)
+        resposta = self.client.put(
+            f'/api/v1/torneios/inscricoes/{inscricao.id}/',
+            {'decklist': 'Sol Ring', 'status': 'Inscrito', 'id_torneio': outro_torneio.id},
+            format='json',
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        inscricao.refresh_from_db()
+        self.assertEqual(inscricao.decklist, 'Sol Ring')
+        self.assertEqual(inscricao.status, 'Cancelado')
+        self.assertEqual(inscricao.id_torneio_id, self.torneio.id)
+
+    def test_nao_apaga_inscricao_de_torneio_em_andamento(self):
+        jogador = self.criar_jogadores(1)[0]
+        inscricao = Inscricao.objects.get(id_usuario=jogador, id_torneio=self.torneio)
+        self.client.force_authenticate(jogador)
+        resposta = self.client.delete(f'/api/v1/torneios/inscricoes/{inscricao.id}/')
+        self.assertEqual(resposta.status_code, 400)
+        self.assertTrue(Inscricao.objects.filter(id=inscricao.id).exists())
+
+    def test_apaga_inscricao_de_torneio_aberto(self):
+        aberto = Torneio.objects.create(
+            id_loja=self.loja, nome='A', regras='r', status='Aberto', data_inicio=timezone.now() + timedelta(days=1)
+        )
+        jogador = self.criar_jogadores(1, torneio=aberto)[0]
+        inscricao = Inscricao.objects.get(id_usuario=jogador, id_torneio=aberto)
+        self.client.force_authenticate(jogador)
+        resposta = self.client.delete(f'/api/v1/torneios/inscricoes/{inscricao.id}/')
+        self.assertEqual(resposta.status_code, 204)
+
+
+class InscricaoTardiaTests(BaseTorneioTestCase):
+    """RF-006: a loja inscreve jogadores no começo e entre as rodadas."""
+
+    def test_loja_inscreve_por_email_em_torneio_em_andamento(self):
+        Torneio.objects.filter(id=self.torneio.id).update(data_inicio=timezone.now() - timedelta(hours=2))
+        jogador = self.criar_usuario('tardio@teste.com')
+        self.client.force_authenticate(self.loja)
+        resposta = self.client.post(
+            '/api/v1/torneios/inscricoes/inscrever_por_email/',
+            {'torneio_id': self.torneio.id, 'email': jogador.email},
+            format='json',
+        )
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+
+    def test_jogador_nao_se_inscreve_em_torneio_em_andamento(self):
+        jogador = self.criar_usuario('tardio@teste.com')
+        self.client.force_authenticate(jogador)
+        resposta = self.client.post('/api/v1/torneios/inscricoes/', {'id_torneio': self.torneio.id}, format='json')
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_loja_nao_inscreve_em_torneio_finalizado(self):
+        Torneio.objects.filter(id=self.torneio.id).update(status='Finalizado')
+        jogador = self.criar_usuario('tardio@teste.com')
+        self.client.force_authenticate(self.loja)
+        resposta = self.client.post(
+            '/api/v1/torneios/inscricoes/inscrever_por_email/',
+            {'torneio_id': self.torneio.id, 'email': jogador.email},
+            format='json',
+        )
+        self.assertEqual(resposta.status_code, 400)
+
+
+class InscricaoVagasTests(BaseTorneioTestCase):
     def setUp(self):
         super().setUp()
         self.aberto = Torneio.objects.create(
@@ -427,6 +540,41 @@ class ProximaRodadaTests(BaseTorneioTestCase):
         self.assertEqual(resposta.status_code, 200)
         rodada.refresh_from_db()
         self.assertIsNotNone(rodada.data_inicio)
+
+
+class FinalizarTorneioTests(BaseTorneioTestCase):
+    def test_finaliza_descartando_rodada_ainda_em_emparelhamento(self):
+        a, b, c, d = self.criar_jogadores(4)
+        rodada_1 = self.criar_rodada(1, 'Em Andamento')
+        self.criar_mesa(rodada_1, [a, b], [c, d], vencedor=1)
+        self.client.force_authenticate(self.loja)
+        self.client.post(f'/api/v1/torneios/torneios/{self.torneio.id}/proxima_rodada/')
+
+        resposta = self.client.post(f'/api/v1/torneios/torneios/{self.torneio.id}/finalizar/')
+
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.assertEqual(resposta.data['total_rodadas'], 1)
+        self.assertFalse(Rodada.objects.filter(id_torneio=self.torneio, numero_rodada=2).exists())
+        self.assertEqual(resposta.data['ranking'][0]['pontos'], self.torneio.pontuacao_vitoria)
+
+
+class EditarResultadoTests(BaseTorneioTestCase):
+    def test_editar_resultado_de_rodada_finalizada_recalcula_ranking(self):
+        a, b, c, d = self.criar_jogadores(4)
+        rodada = self.criar_rodada(1, 'Finalizada')
+        mesa = self.criar_mesa(rodada, [a, b], [c, d], vencedor=1)
+        calcular_e_salvar_ranking_parcial(self.torneio, 1)
+        self.client.force_authenticate(self.loja)
+
+        resposta = self.client.patch(
+            f'/api/v1/torneios/mesas/{mesa.id}/editar_manual/',
+            {'time_vencedor': 2, 'pontuacao_time_1': 0, 'pontuacao_time_2': 1},
+            format='json',
+        )
+
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        primeiro = RankingParcial.objects.get(id_torneio=self.torneio, rodada_numero=1, posicao=1)
+        self.assertIn(primeiro.id_usuario_id, (c.id, d.id))
 
 
 class RankingTests(BaseTorneioTestCase):

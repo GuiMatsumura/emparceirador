@@ -16,8 +16,8 @@ interface ITorneioCompleto extends ITorneio {
   banner?: string | null;
   vagas_limitadas: boolean;
   qnt_vagas?: number | null;
-  incricao_gratuita: boolean;
-  valor_incricao?: number | null;
+  inscricao_gratuita: boolean;
+  valor_inscricao?: number | null;
   data_inicio: string;
   loja_nome: string;
 }
@@ -245,7 +245,7 @@ const InscricaoTorneio: React.FC = () => {
                   <FaStore /> <span>{torneio.loja_nome}</span>
                 </div>
                 <div className={estilos.itemInfo}>
-                  <FaMoneyBillAlt /> <span>{formatarValor(torneio.valor_incricao, torneio.incricao_gratuita)}</span>
+                  <FaMoneyBillAlt /> <span>{formatarValor(torneio.valor_inscricao, torneio.inscricao_gratuita)}</span>
                 </div>
               </div>
             </div>

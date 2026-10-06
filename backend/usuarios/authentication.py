@@ -37,7 +37,9 @@ class SessionAuthenticationPorOrigem(SessionAuthentication):
             return
 
         origem = _origem(cabecalho)
-        permitidas = {o.strip().lower().rstrip('/') for o in [*settings.CORS_ALLOWED_ORIGINS, *settings.CSRF_TRUSTED_ORIGINS]}
+        permitidas = {
+            o.strip().lower().rstrip('/') for o in [*settings.CORS_ALLOWED_ORIGINS, *settings.CSRF_TRUSTED_ORIGINS]
+        }
         permitidas.add(f'{request.scheme}://{request.get_host()}'.lower())
 
         if origem not in permitidas:

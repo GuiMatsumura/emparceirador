@@ -1,27 +1,14 @@
-from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
-from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
-from django.utils import timezone
-from django.utils.crypto import get_random_string
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.status import (
-    HTTP_200_OK,
-    HTTP_204_NO_CONTENT,
-    HTTP_400_BAD_REQUEST,
-    HTTP_401_UNAUTHORIZED,
-    HTTP_404_NOT_FOUND,
-)
 from rest_framework.views import APIView
 
-from torneios.permissoes import IsOwnerOrAdmin
-
+from . import servicos
 from .models import Usuario
+from .permissoes import IsProprioUsuarioOuAdmin
 from .serializers import (
     AlterarSenhaSerializer,
     LoginSerializer,
@@ -29,309 +16,123 @@ from .serializers import (
     UsuarioCreateSerializer,
     UsuarioSerializer,
     ValidarTokenRedefinirSenhaSerializer,
+    buscar_por_email,
 )
 
 
 class LoginView(APIView):
-    """
-    Endpoint para realizar o login na aplicação.
-    """
+    """Autentica por e-mail e senha e abre a sessão (cookie)."""
 
     permission_classes = [AllowAny]
+    throttle_scope = 'autenticacao'
 
-    @swagger_auto_schema(request_body=LoginSerializer, responses={200: UsuarioSerializer(many=False)})
+    @swagger_auto_schema(request_body=LoginSerializer, responses={200: UsuarioSerializer})
     def post(self, request):
-        email = request.data.get('email')
-        password = request.data.get('password')
+        dados = LoginSerializer(data=request.data)
+        dados.is_valid(raise_exception=True)
 
-        if not email or not password:
-            return Response({'error': 'Email e senha são obrigatórios'}, status=HTTP_400_BAD_REQUEST)
-
-        usuario = authenticate(request, username=email, password=password)
-
-        if not usuario:
-            return Response({'error': 'Credenciais inválidas'}, status=HTTP_401_UNAUTHORIZED)
-
-        if not usuario.is_active:
-            return Response({'error': 'Usuário inativo'}, status=HTTP_401_UNAUTHORIZED)
+        cadastrado = buscar_por_email(dados.validated_data['email'])
+        usuario = (
+            authenticate(request, username=cadastrado.email, password=dados.validated_data['password'])
+            if cadastrado
+            else None
+        )
+        if usuario is None:
+            return Response({'detail': 'Credenciais inválidas'}, status=status.HTTP_401_UNAUTHORIZED)
 
         login(request, usuario)
-
-        return Response(
-            {
-                'message': 'Login realizado com sucesso',
-                'sessionid': request.session.session_key,
-                'dados': UsuarioSerializer(usuario).data,
-            },
-            status=HTTP_200_OK,
-        )
+        return Response({'message': 'Login realizado com sucesso', 'dados': UsuarioSerializer(usuario).data})
 
 
 class LogoutView(APIView):
-    """
-    Endpoint para realizar o logout na aplicação.
-    """
-
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(responses={200: 'Logout realizado com sucesso'})
+    @swagger_auto_schema(request_body=None)
     def post(self, request):
-        session_id = request.session.session_key
-
         logout(request)
-
-        return Response(
-            {'message': 'Logout realizado com sucesso', 'sessionid_anterior': session_id}, status=HTTP_200_OK
-        )
+        return Response({'message': 'Logout realizado com sucesso'})
 
 
-@method_decorator(csrf_exempt, name='dispatch')
 class ValidarSessaoView(APIView):
-    """
-    Endpoint para validar a sessão do utilizador.
-
-    Este endpoint verifica se o cookie de sessão enviado na requisição
-    corresponde a um utilizador autenticado.
-
-    - Se o utilizador estiver autenticado, retorna os seus dados com status 200.
-    - Se o utilizador não estiver autenticado (sem cookie ou com cookie inválido),
-      retorna uma resposta de sucesso sem conteúdo (status 204), evitando
-      que um erro seja enviado e mal interpretado, como um 403.
-    """
+    """Dados do usuário logado (200) ou 204 se não há sessão — evita que o front trate 'sem sessão' como erro."""
 
     permission_classes = [AllowAny]
 
-    @swagger_auto_schema(responses={200: UsuarioSerializer(many=False), 204: 'Nenhuma sessão ativa.'})
+    @swagger_auto_schema(responses={200: UsuarioSerializer, 204: 'Nenhuma sessão ativa.'})
     def get(self, request):
-        """
-        Verifica o estado de autenticação do utilizador da requisição.
-        """
-        # Verifica se o objeto 'request.user' representa um utilizador autenticado.
         if request.user.is_authenticated:
-            # Se sim, serializa e retorna os dados do utilizador.
-            serializer = UsuarioSerializer(request.user)
-            return Response(serializer.data, status=HTTP_200_OK)
-        else:
-            # Se não, retorna uma resposta de sucesso, mas sem conteúdo.
-            # Isto informa ao frontend que não há sessão, sem gerar um erro 403, por exemplo.
-            return Response(status=HTTP_204_NO_CONTENT)
+            return Response(UsuarioSerializer(request.user).data)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class RequisitarTrocaSenhaView(APIView):
-    """
-    Endpoint para requisitar o Token.
-
-    Em caso de sucesso, envia o Token de Recuperação de Senha para o email do usuário.
-    """
+    """Envia por e-mail um token de redefinição de senha (válido por 30 minutos)."""
 
     permission_classes = [AllowAny]
+    throttle_scope = 'autenticacao'
 
-    @swagger_auto_schema(request_body=RequisitarTrocaSenhaSerializer, responses={200: 'Token enviado com sucesso'})
+    @swagger_auto_schema(request_body=RequisitarTrocaSenhaSerializer)
     def post(self, request):
-        serializer = RequisitarTrocaSenhaSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        email = serializer.validated_data['email']
-        usuario = Usuario.objects.get(email=email)
-
-        # Gerar token simples
-        token = get_random_string(length=16)
-        usuario.token_redefinir_senha = token
-        usuario.token_redefinir_senha_criado_em = timezone.now()
-        usuario.save(update_fields=['token_redefinir_senha', 'token_redefinir_senha_criado_em'])
-
-        # Renderizar o HTML do email
-        email_html = render_to_string('emails/token_redefinir_senha.html', {'token': token, 'nome': usuario.username})
-
-        # Fallback em texto puro
-        email_texto_puro = f'Seu token para redefinição de senha é: {token}'
-
-        # Configurar email com HTML
-        email_msg = EmailMultiAlternatives(
-            subject='Redefinição de senha - Commander150',
-            body=email_texto_puro,
-            from_email=settings.EMAIL_HOST_USER,
-            to=[email],
-        )
-        email_msg.attach_alternative(email_html, 'text/html')
-        email_msg.send()
-
-        return Response({'message': f'Token enviado para o email {email} com sucesso.'}, status=HTTP_200_OK)
+        dados = RequisitarTrocaSenhaSerializer(data=request.data)
+        dados.is_valid(raise_exception=True)
+        usuario = dados.validated_data['usuario']
+        servicos.enviar_token_redefinicao(usuario)
+        return Response({'message': f'Token enviado para o email {usuario.email} com sucesso.'})
 
 
 class ValidarTokenRedefinirSenhaView(APIView):
-    """
-    Endpoint para requisitar a Nova Senha
-
-    Utilizado após estar em posse do Token.
-    Em caso de sucesso, envia o a Nova Senha para o email do usuário.
-    """
+    """Com um token válido, gera uma nova senha e envia por e-mail."""
 
     permission_classes = [AllowAny]
+    throttle_scope = 'autenticacao'
 
-    @swagger_auto_schema(
-        request_body=ValidarTokenRedefinirSenhaSerializer, responses={200: 'Senha redefinida com sucesso'}
-    )
+    @swagger_auto_schema(request_body=ValidarTokenRedefinirSenhaSerializer)
     def post(self, request):
-        serializer = ValidarTokenRedefinirSenhaSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        email = serializer.validated_data['email']
-        token = serializer.validated_data['token']
-
-        usuario = Usuario.objects.get(email=email, token_redefinir_senha=token)
-
-        # Gerar nova senha
-        nova_senha = get_random_string(length=8)
-        usuario.set_password(nova_senha)
-        usuario.token_redefinir_senha = None  # Limpar o token após uso
-        usuario.token_redefinir_senha_criado_em = None
-        usuario.save()
-
-        # Renderizar o HTML do email
-        email_html = render_to_string(
-            'emails/sucesso_redefinir_senha.html', {'nova_senha': nova_senha, 'nome': usuario.username}
-        )
-        email_texto_puro = f'Sua nova senha é: {nova_senha}. Recomendamos alterá-la assim que possível.'
-
-        # Configurar email com HTML
-        email_msg = EmailMultiAlternatives(
-            subject='Sua nova senha - Commander150',
-            body=email_texto_puro,
-            from_email=settings.EMAIL_HOST_USER,
-            to=[email],
-        )
-        email_msg.attach_alternative(email_html, 'text/html')
-        email_msg.send()
-
+        dados = ValidarTokenRedefinirSenhaSerializer(data=request.data)
+        dados.is_valid(raise_exception=True)
+        usuario = dados.validated_data['usuario']
+        servicos.redefinir_senha_com_token(usuario)
         return Response(
-            {'message': f'Senha redefinida com sucesso. Verifique seu email {email} para obter a nova senha.'},
-            status=HTTP_200_OK,
+            {'message': f'Senha redefinida com sucesso. Verifique seu email {usuario.email} para obter a nova senha.'}
         )
 
 
 class AlterarSenhaView(APIView):
-    """
-    Endpoint para alteração de senha.
+    """Troca de senha pelo próprio usuário (ou por um admin)."""
 
-    Regras:
-    - Usuário deve estar autenticado
-    - Só pode alterar própria senha (ou admin altera qualquer uma)
-    - Recebe email, senha antiga e nova senha
-    - Valida apenas se nova senha ≠ senha antiga
-    """
+    permission_classes = [IsProprioUsuarioOuAdmin]
 
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
-
-    @swagger_auto_schema(
-        request_body=AlterarSenhaSerializer,
-        responses={200: 'Senha alterada com sucesso', 400: 'Erro de validação', 404: 'Usuário não encontrado'},
-    )
+    @swagger_auto_schema(request_body=AlterarSenhaSerializer)
     def post(self, request, user_id):
-        """
-        Altera a senha do usuário especificado.
-        """
-        # Busca o usuário - se não existir, retorna 404
-        try:
-            usuario = Usuario.objects.get(id=user_id)
-        except Usuario.DoesNotExist:
-            return Response({'error': 'Usuário não encontrado.'}, status=HTTP_404_NOT_FOUND)
-
-        # Verifica permissões (IsOwnerOrAdmin garante que é o próprio ou admin)
+        usuario = get_object_or_404(Usuario, id=user_id)
         self.check_object_permissions(request, usuario)
 
-        # Valida dados
-        serializer = AlterarSenhaSerializer(data=request.data, context={'usuario': usuario})
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
-
-        # Verifica se a senha antiga está correta
-        if not usuario.check_password(serializer.validated_data['senha_antiga']):
-            return Response({'error': 'Senha antiga incorreta.'}, status=HTTP_400_BAD_REQUEST)
-
-        # Altera a senha
-        usuario.set_password(serializer.validated_data['nova_senha'])
-        usuario.save()
-
-        return Response({'message': 'Senha alterada com sucesso.'}, status=HTTP_200_OK)
+        dados = AlterarSenhaSerializer(data=request.data, context={'usuario': usuario})
+        dados.is_valid(raise_exception=True)
+        usuario.set_password(dados.validated_data['nova_senha'])
+        usuario.save(update_fields=['password'])
+        return Response({'message': 'Senha alterada com sucesso.'})
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):
     """
-    Endpoint da API para gerenciamento de usuários.
+    Usuários.
 
-    Regras de acesso:
-    - Cadastro (create): Público, qualquer um pode criar usuário
-    - Listagem (list):
-        • Admins: veem todos os usuários
-        • Outros: veem apenas seu próprio perfil na lista
-    - Detalhes/Edição (retrieve/update/delete):
-        • Acesso ao objeto é controlado pela permissão IsOwnerOrAdmin
-        • Retorna 403 Forbidden se usuário não for owner ou admin
-        • Retorna 404 Not Found se objeto não existir
+    - Cadastro (POST): público.
+    - Listagem: ADMIN vê todos; os demais veem só o próprio perfil.
+    - Detalhe/edição/exclusão: o próprio usuário ou um ADMIN.
     """
 
-    queryset = Usuario.objects.all()
-    serializer_class = UsuarioSerializer
-
     def get_queryset(self):
-        """
-        Filtra os usuários visíveis baseado no tipo do usuário logado.
-        IMPORTANTE: Para ações de listagem apenas, não afeta retrieve/update/delete.
-        """
-        user = self.request.user
-
-        if not user.is_authenticated:
-            return Usuario.objects.none()
-
-        # Para ação de listagem, aplicamos filtro
-        if self.action == 'list':
-            if user.tipo == 'ADMIN':
-                return Usuario.objects.all()
-            return Usuario.objects.filter(id=user.id)
-
-        # Para outras ações (retrieve/update/delete), retornamos todos
-        # para que as permissões object-level possam ser verificadas
+        usuario = self.request.user
+        if self.action == 'list' and usuario.tipo != 'ADMIN':
+            return Usuario.objects.filter(id=usuario.id)
         return Usuario.objects.all()
 
-    def get_object(self):
-        """
-        Obtém um usuário específico diferenciando entre:
-        - 404 Not Found: Quando o usuário não existe
-        - 403 Forbidden: Quando existe mas o usuário logado não tem permissão
-        """
-        try:
-            # Busca o objeto normalmente a partir do queryset completo
-            obj = super().get_object()
-
-            # Verifica permissões no objeto - levanta 403 automaticamente se falhar
-            self.check_object_permissions(self.request, obj)
-
-            return obj
-
-        except Usuario.DoesNotExist:
-            from rest_framework.exceptions import NotFound
-
-            raise NotFound('Usuário não encontrado.')
-
     def get_serializer_class(self):
-        """
-        Define qual serializer usar baseado na ação:
-        - Create: UsuarioCreateSerializer (com campo password)
-        - Outras: UsuarioSerializer (sem password)
-        """
         return UsuarioCreateSerializer if self.action == 'create' else UsuarioSerializer
 
     def get_permissions(self):
-        """
-        Configura as permissões para cada tipo de ação:
-        - Create: Livre acesso (AllowAny)
-        - Ações individuais: Requer autenticação + ser dono ou admin
-        - Listagem: Apenas autenticação (filtro é feito no get_queryset)
-        """
         if self.action == 'create':
             return [AllowAny()]
-        elif self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
-            return [IsAuthenticated(), IsOwnerOrAdmin()]
-        else:
-            return [IsAuthenticated()]
+        return [IsProprioUsuarioOuAdmin()]

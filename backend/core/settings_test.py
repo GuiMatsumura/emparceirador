@@ -8,6 +8,7 @@ e o envio de e-mails pelo backend em memória do Django.
 """
 
 from .settings import *  # noqa: F401,F403
+from .settings import REST_FRAMEWORK
 
 DATABASES = {
     'default': {
@@ -20,3 +21,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
 # Hash rápido para acelerar a criação de usuários nos testes
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+# Sem limite de requisições nos testes
+REST_FRAMEWORK = {**REST_FRAMEWORK, 'DEFAULT_THROTTLE_RATES': {'autenticacao': None}}

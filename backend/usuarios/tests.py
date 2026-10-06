@@ -180,3 +180,42 @@ class RedefinirSenhaTests(APITestCase):
         self.assertEqual(resposta.status_code, 400)
         self.usuario.refresh_from_db()
         self.assertTrue(self.usuario.check_password('senha-antiga-123'))
+
+
+class GerenciadorUsuarioTests(APITestCase):
+    def test_superusuario_e_admin(self):
+        admin = Usuario.objects.create_superuser(email='root@teste.com', password='senha-forte-123')
+        self.assertEqual(admin.tipo, Usuario.TipoUsuario.ADMIN)
+        self.assertTrue(admin.is_staff)
+
+    def test_username_padrao_e_o_email(self):
+        usuario = Usuario.objects.create_user(email='semnome@teste.com', password='senha-forte-123', tipo='JOGADOR')
+        self.assertEqual(usuario.username, 'semnome@teste.com')
+
+
+class LoginTests(APITestCase):
+    url = '/api/v1/auth/login/'
+
+    def setUp(self):
+        Usuario.objects.create_user(email='Jogador@Teste.com', password='senha-forte-123', tipo='JOGADOR')
+
+    def test_login_nao_expoe_id_da_sessao(self):
+        resposta = self.client.post(self.url, {'email': 'Jogador@Teste.com', 'password': 'senha-forte-123'})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertNotIn('sessionid', resposta.data)
+        self.assertEqual(resposta.data['dados']['tipo'], 'JOGADOR')
+
+    def test_email_sem_diferenciar_maiusculas(self):
+        resposta = self.client.post(self.url, {'email': 'jogador@teste.com', 'password': 'senha-forte-123'})
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_credenciais_invalidas(self):
+        resposta = self.client.post(self.url, {'email': 'jogador@teste.com', 'password': 'errada'})
+        self.assertEqual(resposta.status_code, 401)
+        self.assertIn('detail', resposta.data)
+
+    def test_logout_nao_expoe_id_da_sessao(self):
+        self.client.post(self.url, {'email': 'jogador@teste.com', 'password': 'senha-forte-123'})
+        resposta = self.client.post('/api/v1/auth/logout/')
+        self.assertEqual(resposta.status_code, 200)
+        self.assertNotIn('sessionid_anterior', resposta.data)

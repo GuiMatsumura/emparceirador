@@ -418,7 +418,7 @@ export default function Intervalo() {
             date={torneio ? formatarData(torneio?.data_inicio) : ""}
             time={torneio ? formatarHora(torneio?.data_inicio) : ""}
             location={torneio?.loja_nome || ""}
-            price={torneio ? formatarPreco(torneio.valor_incricao, torneio.incricao_gratuita) : ""}
+            price={torneio ? formatarPreco(torneio.valor_inscricao, torneio.inscricao_gratuita) : ""}
             players={torneio?.qnt_vagas || 0}
             tournamentId={torneio?.id}
           />

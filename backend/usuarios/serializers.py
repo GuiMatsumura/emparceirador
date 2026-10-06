@@ -7,7 +7,6 @@ from rest_framework import serializers
 
 from .models import Usuario
 
-# Tempo de validade do token de redefinição de senha
 VALIDADE_TOKEN_REDEFINIR_SENHA = timedelta(minutes=30)
 
 
@@ -16,43 +15,41 @@ def validar_forca_senha(senha, usuario=None):
     try:
         validate_password(senha, user=usuario)
     except DjangoValidationError as erro:
-        raise serializers.ValidationError(list(erro.messages))
+        raise serializers.ValidationError(list(erro.messages)) from erro
     return senha
 
 
+def buscar_por_email(email):
+    """E-mail é comparado sem diferenciar maiúsculas/minúsculas."""
+    return Usuario.objects.filter(email__iexact=email).first()
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
-    """
-    Serializer padrão para o modelo Usuario.
-    Usado para exibir os dados dos usuários. O campo 'password' não é incluído
-    para garantir que a senha nunca seja exposta em respostas da API.
-    """
+    """Dados públicos do usuário (nunca inclui a senha)."""
 
     class Meta:
         model = Usuario
-        # Campos a serem exibidos. 'password' é omitido intencionalmente.
         fields = ['id', 'email', 'username', 'tipo', 'status', 'date_joined']
         read_only_fields = ['id', 'date_joined', 'tipo']
 
 
 class UsuarioCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer específico para a CRIAÇÃO de novos usuários.
-    Sua única finalidade é garantir que a senha seja tratada corretamente
-    durante o processo de cadastro.
-    """
+    """Cadastro. A senha é validada e gravada com hash (create_user)."""
 
     class Meta:
         model = Usuario
-        # Campos necessários para o cadastro.
         fields = ['id', 'email', 'username', 'tipo', 'password']
-        # 'password' como 'write_only' significa que NUNCA será retornado em uma resposta da API (leitura).
         extra_kwargs = {'password': {'write_only': True}, 'id': {'read_only': True}}
+
+    def validate_email(self, value):
+        if buscar_por_email(value):
+            raise serializers.ValidationError('Já existe um usuário com este e-mail.')
+        return value
 
     def validate_tipo(self, value):
         """Cadastro público só cria JOGADOR ou LOJA. Apenas um ADMIN logado pode criar outro ADMIN."""
         if value == Usuario.TipoUsuario.ADMIN:
-            request = self.context.get('request')
-            usuario_logado = getattr(request, 'user', None)
+            usuario_logado = getattr(self.context.get('request'), 'user', None)
             if not (usuario_logado and usuario_logado.is_authenticated and usuario_logado.tipo == 'ADMIN'):
                 raise serializers.ValidationError('Não é permitido criar usuários do tipo ADMIN.')
         return value
@@ -62,29 +59,27 @@ class UsuarioCreateSerializer(serializers.ModelSerializer):
         try:
             validar_forca_senha(data.get('password'), usuario_provisorio)
         except serializers.ValidationError as erro:
-            raise serializers.ValidationError({'password': erro.detail})
+            raise serializers.ValidationError({'password': erro.detail}) from erro
         return data
 
     def create(self, validated_data):
-        """
-        Sobrescreve o método de criação padrão do serializer.
-        Esta é a parte crucial: em vez de usar o método genérico de criação,
-        chamamos o 'create_user' do nosso modelo de Usuario. Este método
-        foi projetado pelo Django para lidar com a criação de usuários,
-        e o mais importante: ele aplica o HASH na senha antes de salvá-la
-        no banco de dados.
-        """
-        usuario = Usuario.objects.create_user(**validated_data)
-        return usuario
+        return Usuario.objects.create_user(**validated_data)
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(trim_whitespace=False)
 
 
 class RequisitarTrocaSenhaSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-    def validate_email(self, value):
-        if not Usuario.objects.filter(email=value).exists():
-            raise serializers.ValidationError('Usuário com este email não foi encontrado.')
-        return value
+    def validate(self, data):
+        usuario = buscar_por_email(data['email'])
+        if not usuario:
+            raise serializers.ValidationError({'email': 'Usuário com este email não foi encontrado.'})
+        data['usuario'] = usuario
+        return data
 
 
 class ValidarTokenRedefinirSenhaSerializer(serializers.Serializer):
@@ -92,50 +87,38 @@ class ValidarTokenRedefinirSenhaSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=16)
 
     def validate(self, data):
-        email = data.get('email')
-        token = data.get('token')
-        usuario = Usuario.objects.filter(email=email).first()
-
+        usuario = buscar_por_email(data['email'])
         if not usuario:
             raise serializers.ValidationError('Usuário com este email não foi encontrado.')
 
-        if not usuario.token_redefinir_senha or usuario.token_redefinir_senha != token:
-            raise serializers.ValidationError('Token inválido ou expirado.')
-
         criado_em = usuario.token_redefinir_senha_criado_em
-        if not criado_em or timezone.now() - criado_em > VALIDADE_TOKEN_REDEFINIR_SENHA:
+        token_valido = (
+            usuario.token_redefinir_senha
+            and usuario.token_redefinir_senha == data['token']
+            and criado_em
+            and timezone.now() - criado_em <= VALIDADE_TOKEN_REDEFINIR_SENHA
+        )
+        if not token_valido:
             raise serializers.ValidationError('Token inválido ou expirado.')
 
+        data['usuario'] = usuario
         return data
 
 
 class AlterarSenhaSerializer(serializers.Serializer):
-    """
-    Serializer para alteração de senha.
-    Apenas valida que a nova senha não seja igual à antiga.
-    """
+    """Troca de senha. O dono da senha vem em context['usuario'] (melhora a checagem de similaridade)."""
 
-    senha_antiga = serializers.CharField(write_only=True)
-    nova_senha = serializers.CharField(write_only=True)
+    senha_antiga = serializers.CharField(write_only=True, trim_whitespace=False)
+    nova_senha = serializers.CharField(write_only=True, trim_whitespace=False)
 
     def validate(self, data):
-        """
-        Valida se a nova senha é diferente da antiga e se atende aos validadores de senha do Django.
-        O usuário dono da senha pode ser passado em context['usuario'] (melhora a checagem de similaridade).
-        """
+        usuario = self.context['usuario']
+        if not usuario.check_password(data['senha_antiga']):
+            raise serializers.ValidationError({'senha_antiga': 'Senha antiga incorreta.'})
         if data['senha_antiga'] == data['nova_senha']:
             raise serializers.ValidationError('A nova senha não pode ser igual à senha antiga.')
         try:
-            validar_forca_senha(data['nova_senha'], self.context.get('usuario'))
+            validar_forca_senha(data['nova_senha'], usuario)
         except serializers.ValidationError as erro:
-            raise serializers.ValidationError({'nova_senha': erro.detail})
+            raise serializers.ValidationError({'nova_senha': erro.detail}) from erro
         return data
-
-
-class LoginSerializer(serializers.Serializer):
-    """
-    Utilizado somente para a documentação do Swagger para automatizar os campos na documentação.
-    """
-
-    email = serializers.EmailField()
-    password = serializers.CharField()
